@@ -42,11 +42,13 @@ def set_cache(
     verdict: str,
     providers: dict[str, ProviderResult],
     strategy: str,
+    ttl_days: int | None = None,
 ) -> None:
     """Upsert a cache entry for this email."""
     key = email.strip().lower()
     now = _now()
-    expires = now + timedelta(days=settings.cache_ttl_days)
+    effective_ttl = ttl_days if (ttl_days is not None and ttl_days > 0) else settings.cache_ttl_days
+    expires = now + timedelta(days=effective_ttl)
     provider_data = json.dumps({n: r.model_dump() for n, r in providers.items()})
     providers_used = ",".join(providers.keys())
 

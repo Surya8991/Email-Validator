@@ -22,6 +22,7 @@ async def validate_with_cache(
     email: str,
     provider_names: list[str],
     strategy: str,
+    ttl_days: int | None = None,
 ) -> tuple[str, dict[str, ProviderResult], EmailCache | None]:
     """Validate with cache check. Returns (verdict, providers, cache_row_if_hit)."""
     cached = get_cached(email)
@@ -29,9 +30,9 @@ async def validate_with_cache(
         return cached.verdict, parse_cached_providers(cached), cached
 
     verdict, providers = await validate(email, provider_names, strategy)
-    # Don't cache "unknown" results — they may be transient (network/API errors)
-    if verdict != "unknown":
-        set_cache(email, verdict, providers, strategy)
+    # ttl_days=0 means caller explicitly opted out of caching
+    if verdict != "unknown" and ttl_days != 0:
+        set_cache(email, verdict, providers, strategy, ttl_days=ttl_days)
     return verdict, providers, None
 
 

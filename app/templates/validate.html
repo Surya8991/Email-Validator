@@ -57,6 +57,22 @@
         </div>
       </div>
 
+      <!-- Cache TTL -->
+      <div>
+        <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider block mb-2">
+          Cache Result For
+        </label>
+        <div class="flex gap-2 flex-wrap" id="ttl-options">
+          {% for label, val in [('1 day', 1), ('7 days', 7), ('30 days', 30), ('90 days', 90), ('1 year', 365), ('No cache', 0)] %}
+          <label class="ttl-card cursor-pointer border rounded-lg px-3 py-1.5 text-xs font-medium transition-all
+            {% if val == 30 %}border-indigo-500 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300{% else %}border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-indigo-300 dark:hover:border-indigo-700{% endif %}">
+            <input type="radio" name="ttl-pick" value="{{ val }}" class="sr-only" {% if val == 30 %}checked{% endif %}>
+            {{ label }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
       <!-- Email input + submit -->
       <form id="single-form" hx-post="/verify/htmx" hx-target="#single-result" hx-swap="innerHTML"
             hx-on::before-request="injectFormFields(this)">
@@ -120,6 +136,18 @@
           </div>
         </div>
 
+        <div>
+          <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider block mb-1.5">Cache Results For</label>
+          <select name="cache_ttl_days" class="input-base w-full">
+            <option value="1">1 day</option>
+            <option value="7">7 days</option>
+            <option value="30" selected>30 days (default)</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="0">No cache</option>
+          </select>
+        </div>
+
         <input type="hidden" name="providers" id="bulk-providers" value="{{ enabled_providers | join(',') }}"/>
         <button type="submit" class="btn-primary w-full py-2.5">Start Bulk Validation</button>
       </form>
@@ -159,7 +187,6 @@ document.querySelectorAll('.strategy-card').forEach(card => {
 
 // Inject hidden fields into HTMX form before submit
 function injectFormFields(form) {
-  // Remove old injected fields
   form.querySelectorAll('.injected').forEach(el => el.remove());
 
   // Strategy
@@ -178,7 +205,29 @@ function injectFormFields(form) {
     inp.value = cb.value; inp.className = 'injected';
     form.appendChild(inp);
   });
+
+  // Cache TTL (-1 = no cache → send 0 so server treats as no-cache)
+  const ttl = document.querySelector('input[name="ttl-pick"]:checked');
+  if (ttl) {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'cache_ttl_days';
+    inp.value = ttl.value;
+    inp.className = 'injected';
+    form.appendChild(inp);
+  }
 }
+
+// TTL card selection
+document.querySelectorAll('.ttl-card').forEach(card => {
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.ttl-card').forEach(c => {
+      c.classList.remove('border-indigo-500','bg-indigo-50','dark:bg-indigo-950/60','text-indigo-700','dark:text-indigo-300');
+      c.classList.add('border-gray-200','dark:border-gray-700','text-gray-600','dark:text-gray-400');
+    });
+    card.classList.remove('border-gray-200','dark:border-gray-700','text-gray-600','dark:text-gray-400');
+    card.classList.add('border-indigo-500','bg-indigo-50','dark:bg-indigo-950/60','text-indigo-700','dark:text-indigo-300');
+  });
+});
 
 // File selection preview
 function fileSelected(input) {

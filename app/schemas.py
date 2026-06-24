@@ -19,6 +19,7 @@ class SingleVerifyRequest(BaseModel):
     email: str
     providers: list[str] = ["bouncify"]
     strategy: str = "bouncify_only"
+    cache_ttl_days: int | None = None  # None = use global default
 
 
 class SingleVerifyResponse(BaseModel):

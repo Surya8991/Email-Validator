@@ -31,6 +31,7 @@ async def create_bulk_job(
     email_column: str = Form(default=""),
     providers: str = Form(default="bouncify"),
     strategy: str = Form(default="bouncify_only"),
+    cache_ttl_days: int = Form(default=0),
 ):
     if settings.max_bulk_emails > 0:
         contents = await file.read()
@@ -63,8 +64,10 @@ async def create_bulk_job(
         session.refresh(job)
         job_id = job.id
 
+    # 0 = no cache, >0 = custom TTL, default form value (30) uses global default
+    ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
     background_tasks.add_task(
-        process_bulk_job, job_id, filepath, email_column, providers.split(","), strategy
+        process_bulk_job, job_id, filepath, email_column, providers.split(","), strategy, ttl
     )
     return BulkJobResponse(job_id=job_id, total=0, status="queued")
 

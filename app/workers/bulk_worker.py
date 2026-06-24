@@ -27,6 +27,7 @@ async def _validate_with_cache(
     email: str,
     providers: list[str],
     strategy: str,
+    ttl_days: int | None = None,
 ) -> tuple[str, dict, bool]:
     """Returns (verdict, provider_data_dict, from_cache)."""
     cached = get_cached(email)
@@ -34,8 +35,8 @@ async def _validate_with_cache(
         return cached.verdict, parse_cached_providers(cached), True
 
     verdict, provider_results = await validate(email, providers, strategy)
-    if verdict != "unknown":
-        set_cache(email, verdict, provider_results, strategy)
+    if verdict != "unknown" and ttl_days != 0:
+        set_cache(email, verdict, provider_results, strategy, ttl_days=ttl_days)
     return verdict, provider_results, False
 
 
@@ -45,6 +46,7 @@ async def process_bulk_job(
     email_column: str,
     providers: list[str],
     strategy: str,
+    ttl_days: int | None = None,
 ) -> None:
     rows = await parse_csv_emails(filepath, email_column)
 
@@ -64,7 +66,7 @@ async def process_bulk_job(
     for i in range(0, len(rows), CHUNK_SIZE):
         chunk = rows[i : i + CHUNK_SIZE]
         tasks = [
-            _validate_with_cache(email, providers, strategy) for _, email, _ in chunk
+            _validate_with_cache(email, providers, strategy, ttl_days) for _, email, _ in chunk
         ]
         verdicts = await asyncio.gather(*tasks)
 

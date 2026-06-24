@@ -24,7 +24,7 @@ def _confidence(verdict: str, providers: dict[str, ProviderResult]) -> int:
 async def verify_single_json(req: SingleVerifyRequest):
     t0 = time.monotonic()
     verdict, providers, cache_row = await validate_with_cache(
-        req.email, req.providers, req.strategy
+        req.email, req.providers, req.strategy, ttl_days=req.cache_ttl_days
     )
     elapsed = (time.monotonic() - t0) * 1000
     return SingleVerifyResponse(
@@ -47,10 +47,15 @@ async def verify_single_htmx(request: Request):
     if not providers_raw:
         providers_raw = ["bouncify"]
     strategy = str(form.get("strategy", "bouncify_only"))
+    ttl_raw = form.get("cache_ttl_days")
+    try:
+        ttl_days: int | None = int(ttl_raw) if ttl_raw else None
+    except (ValueError, TypeError):
+        ttl_days = None
 
     t0 = time.monotonic()
     verdict, provider_results, cache_row = await validate_with_cache(
-        email, providers_raw, strategy
+        email, providers_raw, strategy, ttl_days=ttl_days
     )
     elapsed = (time.monotonic() - t0) * 1000
 
