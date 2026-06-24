@@ -1,6 +1,6 @@
 # Email Validator
 
-Multi-provider email validation web app with auth, teams, and an admin panel. Validates single emails or bulk CSVs using Bouncify, ZeroBounce, NeverBounce, Hunter.io, and a free local stack — with caching, analytics, and a clean UI.
+A multi-provider email validation web app with auth, teams, and an admin panel. Validates single emails or bulk CSVs using Bouncify, ZeroBounce, NeverBounce, Hunter.io, and a free local stack — with caching, analytics, and a clean UI.
 
 ---
 
