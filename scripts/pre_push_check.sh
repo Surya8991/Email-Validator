@@ -138,17 +138,17 @@ else
 fi
 
 if [ -f api/index.py ]; then
-  if grep -q 'handler\s*=' api/index.py 2>/dev/null; then
-    ok "api/index.py has handler variable (Mangum entry point)"
+  if grep -q 'from app.main import app' api/index.py 2>/dev/null; then
+    ok "api/index.py exposes ASGI app (Vercel native Python entry point)"
   else
-    fail "api/index.py missing 'handler = Mangum(app)'"
+    fail "api/index.py missing 'from app.main import app'"
   fi
 else
   fail "api/index.py missing — Vercel entry point not found"
 fi
 
 if [ -f requirements.txt ]; then
-  for pkg in fastapi mangum psycopg2-binary sqlmodel jinja2; do
+  for pkg in fastapi psycopg2-binary sqlmodel jinja2; do
     if grep -qi "^${pkg}" requirements.txt 2>/dev/null; then
       ok "requirements.txt contains $pkg"
     else

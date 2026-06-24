@@ -65,12 +65,28 @@ def _bootstrap_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_tables()
-    _bootstrap_admin()
-    registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
+    import traceback
+    try:
+        create_db_tables()
+    except Exception:
+        print("[lifespan] create_db_tables failed:", flush=True)
+        traceback.print_exc()
+    try:
+        _bootstrap_admin()
+    except Exception:
+        print("[lifespan] _bootstrap_admin failed:", flush=True)
+        traceback.print_exc()
+    try:
+        registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
+    except Exception:
+        print("[lifespan] httpx client init failed:", flush=True)
+        traceback.print_exc()
     yield
-    if registry._client and not registry._client.is_closed:
-        await registry._client.aclose()
+    try:
+        if registry._client and not registry._client.is_closed:
+            await registry._client.aclose()
+    except Exception:
+        pass
 
 
 app = FastAPI(
