@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-24 (Session 6). Current VERSION: **0.6.0**
+> Last updated: 2026-06-24 (Session 7). Current VERSION: **0.7.0**
 
 ---
 
@@ -167,10 +167,13 @@ uploads/              gitignored — CSV uploads + results_*.csv
 | `EmailResult` | Per-email result in a bulk job | `job_id`, `email`, `verdict`, `provider_data` (JSON) |
 | `EmailCache` | 30-day result cache | `email` (unique), `verdict`, `provider_data`, `validated_at`, `expires_at` |
 | `ApiUsage` | Per-provider daily call counter | `provider`, `date`, `calls` |
-| `User` | Auth user | `id`, `email`, `password_hash`, `role` (user/admin/superadmin), `is_active`, `created_at`, `last_login` |
+| `User` | Auth user | `id`, `email`, `password_hash`, `role`, `is_active`, `created_at`, `last_login`, `validation_limit` |
 | `UserSession` | Session tokens | `id`, `user_id`, `token_hash` (SHA-256), `expires_at` — 7-day sliding TTL |
 | `Team` | Org teams | `id`, `name`, `description`, `created_by` |
 | `TeamMembership` | User↔Team join | `team_id`, `user_id`, `status` (pending/active/rejected), `approved_by` |
+| `UserInvite` | One-time invite tokens | `email`, `token_hash` (SHA-256), `role`, `invited_by`, `expires_at`, `used_at` |
+| `AuditLog` | Admin action history | `action`, `actor_id`, `actor_email`, `target_type`, `target_id`, `details`, `created_at` |
+| `SystemSetting` | Platform-wide config | `key` (PK), `value`, `updated_at` — keys: registration_open, maintenance_mode, default_validation_limit |
 
 ---
 
@@ -325,6 +328,8 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | 4 | 2026-06-24 | v0.4.0 | Top navbar refactor (replaced sidebar) + Neon PostgreSQL + GitHub Actions bulk flow. Deployed to Vercel. |
 | 5 | 2026-06-24 | v0.5.0 | Session-based auth — login/register/logout, `User`+`UserSession`+`Team`+`TeamMembership` tables, three-tier roles (user/admin/superadmin), `SUPERADMIN_EMAIL` env bootstrap, admin panel (`/admin`) with dark indigo sidebar, users/teams/stats/usage/providers pages, split-panel login design, avatar dropdown in nav, 39-check pre-push checklist, 26 tests. `bcrypt` direct (passlib dropped). |
 | 6 | 2026-06-24 | v0.6.0 | Hotfixes — missing `user_id` column on `job` table (ALTER TABLE on Neon), `RedirectResponse` import in ui.py, `UTC` import cleanup, E501 line-length fixes, admin/superadmin nav visibility fix (role check was `=='admin'` not `in ('admin','superadmin')`), mobile menu Teams+Admin links, avatar dropdown role badge + Admin panel quick-link. |
+| 6b | 2026-06-24 | v0.6.1 | User invite flow — `UserInvite` model, `POST /admin/invite`, `POST /admin/invites/{id}/revoke`, `GET/POST /invite/{token}`, invite.html, users.html invite modal + URL banner + pending invites table. SHA-256 token pattern, superadmin-only admin invites, auto-login on acceptance. |
+| 7 | 2026-06-24 | v0.7.0 | Admin features A2→A6 + design overhaul D1-D7 — A2: user search/filter by email/role/status; A1: AuditLog model + log all write actions, `/admin/audit-log` with pagination; A3: `/admin/sessions` session manager (superadmin, revoke any session); A4: SystemSetting model, `/admin/sys-settings` (registration_open, maintenance_mode, default_validation_limit); A5: User.validation_limit monthly cap enforced in HTMX verify, progress bar in users table, set-limit modal; A6: dashboard quick-action cards + superadmin section + dark-mode-aware chart; D1-D7: admin sidebar sectioned (Data/Access/Config/Superadmin), dark mode toggle in admin, maintenance mode 503 handler, register.html already matched login design. Neon migration: auditlog + systemsetting tables created, validation_limit column added. |
 
 ---
 

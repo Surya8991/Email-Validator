@@ -9,6 +9,12 @@ Multi-provider email validation web app with auth, teams, and an admin panel. Va
 - **Session-based auth** — login, register, logout with HttpOnly cookies; 7-day sliding sessions
 - **Three-tier roles** — `user` → `admin` → `superadmin` with gated access per role
 - **Admin panel** (`/admin`) — manage users, teams, usage stats, provider config
+  - **User search & filters** — search by email, filter by role/status
+  - **User invite flow** — one-time links, role assignment, auto-login on acceptance
+  - **Audit log** — paginated history of all admin write actions with action-type coloring
+  - **Session manager** *(superadmin)* — view all active sessions, revoke any session
+  - **System settings** *(superadmin)* — toggle registration, maintenance mode, default monthly limits
+  - **Per-user validation limits** — monthly cap with progress bar; set per user from Users page
 - **Teams** — admins create teams; users request to join; admins approve/reject
 - **Single email validation** with live results and confidence score
 - **Bulk CSV upload** — drag-and-drop, processed via GitHub Actions (no timeout limit)

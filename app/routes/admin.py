@@ -17,13 +17,16 @@ from app.config import settings
 from app.db import engine, is_postgres
 from app.models import (
     ApiUsage,
+    AuditLog,
     EmailCache,
     EmailResult,
     Job,
+    SystemSetting,
     Team,
     TeamMembership,
     User,
     UserInvite,
+    UserSession,
 )
 from app.providers.registry import get_enabled_providers
 
@@ -31,6 +34,59 @@ INVITE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+def _log_audit(
+    action: str,
+    actor: User,
+    target_type: str = "",
+    target_id: str = "",
+    details: str = "",
+    db: Session | None = None,
+) -> None:
+    log = AuditLog(
+        action=action,
+        actor_id=actor.id,
+        actor_email=actor.email,
+        target_type=target_type,
+        target_id=target_id,
+        details=details,
+    )
+    if db is not None:
+        db.add(log)
+    else:
+        with Session(engine) as s:
+            s.add(log)
+            s.commit()
+
+
+def _get_setting(key: str, default: str = "", db: Session | None = None) -> str:
+    def _fetch(s: Session) -> str:
+        row = s.get(SystemSetting, key)
+        return row.value if row else default
+    if db is not None:
+        return _fetch(db)
+    with Session(engine) as s:
+        return _fetch(s)
+
+
+def _set_setting(key: str, value: str, db: Session) -> None:
+    row = db.get(SystemSetting, key)
+    if row:
+        row.value = value
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(SystemSetting(key=key, value=value))
+
+
+def _month_count(user_id: int, db: Session) -> int:
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    sql = text(
+        "SELECT COUNT(*) FROM emailresult e "
+        "JOIN job j ON j.id = e.job_id "
+        "WHERE j.user_id = :uid AND e.created_at >= :ms"
+    )
+    return db.execute(sql, {"uid": user_id, "ms": month_start}).scalar() or 0
 
 
 def _hash_password(password: str) -> str:
@@ -96,11 +152,29 @@ async def admin_overview(request: Request, current_user: User = Depends(require_
 
 
 @router.get("/users", response_class=HTMLResponse)
-async def admin_users(request: Request, current_user: User = Depends(require_admin)):
+async def admin_users(
+    request: Request,
+    q: str = "",
+    role_filter: str = "",
+    status_filter: str = "",
+    current_user: User = Depends(require_admin),
+):
     with Session(engine) as db:
-        users = db.exec(select(User).order_by(User.created_at.desc())).all()  # type: ignore[arg-type]
+        query = select(User).order_by(User.created_at.desc())  # type: ignore[arg-type]
+        if q:
+            query = query.where(User.email.contains(q.strip().lower()))
+        if role_filter in ("user", "admin", "superadmin"):
+            query = query.where(User.role == role_filter)
+        if status_filter == "active":
+            query = query.where(User.is_active == True)  # noqa: E712
+        elif status_filter == "inactive":
+            query = query.where(User.is_active == False)  # noqa: E712
+        users = db.exec(query).all()
         active_count = sum(1 for u in users if u.is_active)
         pending_count = sum(1 for u in users if not u.is_active)
+        val_counts: dict[int, int] = {
+            u.id: _month_count(u.id, db) for u in users if u.id is not None
+        }
         now = datetime.utcnow()
         invites = db.exec(
             select(UserInvite)
@@ -119,6 +193,10 @@ async def admin_users(request: Request, current_user: User = Depends(require_adm
         "invite_url": invite_url,
         "invite_email": invite_email,
         "invite_error": invite_error,
+        "val_counts": val_counts,
+        "q": q,
+        "role_filter": role_filter,
+        "status_filter": status_filter,
     })
 
 
@@ -160,6 +238,7 @@ async def admin_activate_user(
         user = db.get(User, user_id)
         if user:
             user.is_active = True
+            _log_audit("user.activate", current_user, "user", str(user_id), user.email, db)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 
@@ -175,6 +254,25 @@ async def admin_deactivate_user(
         user = db.get(User, user_id)
         if user:
             user.is_active = False
+            _log_audit("user.deactivate", current_user, "user", str(user_id), user.email, db)
+            db.commit()
+    return RedirectResponse(url="/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/set-limit")
+async def admin_set_user_limit(
+    user_id: int,
+    limit: int | None = Form(default=None),
+    current_user: User = Depends(require_superadmin),
+):
+    with Session(engine) as db:
+        user = db.get(User, user_id)
+        if user:
+            user.validation_limit = limit if (limit and limit > 0) else None
+            _log_audit(
+                "user.set_limit", current_user, "user", str(user_id),
+                f"{user.email} limit={user.validation_limit}", db,
+            )
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 
@@ -220,6 +318,7 @@ async def admin_send_invite(
             invited_by=current_user.id,
             expires_at=datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS),
         ))
+        _log_audit("user.invite.send", current_user, "invite", email, f"role={role}", db)
         db.commit()
 
     base_url = str(request.base_url).rstrip("/")
@@ -238,6 +337,7 @@ async def admin_revoke_invite(
     with Session(engine) as db:
         invite = db.get(UserInvite, invite_id)
         if invite and not invite.used_at:
+            _log_audit("user.invite.revoke", current_user, "invite", invite.email, "", db)
             db.delete(invite)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
@@ -305,6 +405,7 @@ async def admin_promote_user(user_id: int, current_user: User = Depends(require_
         user = db.get(User, user_id)
         if user and user.role == "user":
             user.role = "admin"
+            _log_audit("user.promote", current_user, "user", str(user_id), user.email, db)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 
@@ -315,6 +416,7 @@ async def admin_demote_user(user_id: int, current_user: User = Depends(require_s
         user = db.get(User, user_id)
         if user and user.id != current_user.id and user.role == "admin":
             user.role = "user"
+            _log_audit("user.demote", current_user, "user", str(user_id), user.email, db)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 
@@ -447,3 +549,114 @@ async def admin_delete_team(team_id: int, current_user: User = Depends(require_a
             db.delete(team)
             db.commit()
     return RedirectResponse(url="/admin/teams", status_code=302)
+
+
+# ── A1: Audit Log ─────────────────────────────────────────────────────────────
+
+@router.get("/audit-log", response_class=HTMLResponse)
+async def admin_audit_log(
+    request: Request,
+    page: int = 1,
+    action_filter: str = "",
+    current_user: User = Depends(require_admin),
+):
+    limit = 50
+    offset = (page - 1) * limit
+    with Session(engine) as db:
+        q = select(AuditLog).order_by(AuditLog.created_at.desc())  # type: ignore[arg-type]
+        if action_filter:
+            q = q.where(AuditLog.action.contains(action_filter))
+        logs = db.exec(q.offset(offset).limit(limit)).all()
+        total = db.exec(
+            select(func.count()).select_from(AuditLog)
+        ).one() or 0
+    return templates.TemplateResponse(request, "admin/audit_log.html", {
+        **_admin_ctx("audit", current_user),
+        "logs": logs,
+        "page": page,
+        "total": total,
+        "pages": max(1, (total + limit - 1) // limit),
+        "action_filter": action_filter,
+        "limit": limit,
+    })
+
+
+# ── A3: Session Manager (superadmin only) ─────────────────────────────────────
+
+@router.get("/sessions", response_class=HTMLResponse)
+async def admin_sessions(request: Request, current_user: User = Depends(require_superadmin)):
+    with Session(engine) as db:
+        now = datetime.utcnow()
+        rows = db.exec(
+            select(UserSession, User)
+            .where(UserSession.expires_at > now)
+            .join(User, User.id == UserSession.user_id)  # type: ignore[arg-type]
+            .order_by(UserSession.expires_at.desc())  # type: ignore[arg-type]
+        ).all()
+        sessions = [{"session": s, "user": u} for s, u in rows]
+    return templates.TemplateResponse(request, "admin/sessions.html", {
+        **_admin_ctx("sessions", current_user),
+        "sessions": sessions,
+        "now": now,
+    })
+
+
+@router.post("/sessions/{session_id}/revoke")
+async def admin_revoke_session(
+    session_id: int,
+    current_user: User = Depends(require_superadmin),
+):
+    with Session(engine) as db:
+        s = db.get(UserSession, session_id)
+        if s:
+            target_user = db.get(User, s.user_id)
+            _log_audit(
+                "session.revoke", current_user, "session", str(session_id),
+                target_user.email if target_user else "", db,
+            )
+            db.delete(s)
+            db.commit()
+    return RedirectResponse(url="/admin/sessions", status_code=302)
+
+
+# ── A4: System Settings (superadmin only) ─────────────────────────────────────
+
+_SETTING_KEYS = [
+    ("registration_open", "1", "Open registration", "Allow new users to self-register"),
+    ("maintenance_mode", "0", "Maintenance mode", "Show maintenance page to non-admins"),
+    (
+        "default_validation_limit", "", "Default monthly limit",
+        "Applied to new users (blank = unlimited)",
+    ),
+]
+
+
+@router.get("/sys-settings", response_class=HTMLResponse)
+async def admin_sys_settings(request: Request, current_user: User = Depends(require_superadmin)):
+    with Session(engine) as db:
+        current: dict[str, str] = {
+            key: _get_setting(key, default, db)
+            for key, default, _, _ in _SETTING_KEYS
+        }
+    saved = request.query_params.get("saved") == "1"
+    return templates.TemplateResponse(request, "admin/sys_settings.html", {
+        **_admin_ctx("sys-settings", current_user),
+        "setting_keys": _SETTING_KEYS,
+        "current": current,
+        "saved": saved,
+    })
+
+
+@router.post("/sys-settings")
+async def admin_save_sys_settings(
+    request: Request,
+    current_user: User = Depends(require_superadmin),
+):
+    form = await request.form()
+    with Session(engine) as db:
+        for key, default, _, _ in _SETTING_KEYS:
+            raw = str(form.get(key, default)).strip()
+            _set_setting(key, raw, db)
+        _log_audit("system.settings.update", current_user, "system", "settings", "", db)
+        db.commit()
+    return RedirectResponse(url="/admin/sys-settings?saved=1", status_code=302)

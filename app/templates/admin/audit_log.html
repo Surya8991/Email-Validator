@@ -1,0 +1,100 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Audit Log</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">All admin actions — {{ total }} total events</p>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <form method="get" action="/admin/audit-log" class="flex items-center gap-2 mb-5">
+    <input type="text" name="action_filter" value="{{ action_filter }}" placeholder="Filter by action (e.g. user.activate)…"
+      class="input-base flex-1 max-w-sm"/>
+    <button type="submit" class="btn-primary">Filter</button>
+    {% if action_filter %}
+    <a href="/admin/audit-log" class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition">Clear</a>
+    {% endif %}
+  </form>
+
+  <!-- Log table -->
+  <div class="card overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+        <tr>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">When</th>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Action</th>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Actor</th>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Target</th>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Details</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for log in logs %}
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
+          <td class="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">
+            {{ log.created_at.strftime('%b %d, %H:%M') }}
+          </td>
+          <td class="px-5 py-3">
+            <span class="font-mono text-xs px-2 py-0.5 rounded
+              {% if 'revoke' in log.action or 'deactivate' in log.action or 'demote' in log.action %}
+                bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300
+              {% elif 'activate' in log.action or 'promote' in log.action %}
+                bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300
+              {% elif 'invite' in log.action %}
+                bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300
+              {% elif 'settings' in log.action %}
+                bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300
+              {% else %}
+                bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400
+              {% endif %}">
+              {{ log.action }}
+            </span>
+          </td>
+          <td class="px-5 py-3 text-xs text-gray-600 dark:text-gray-400 truncate max-w-36">
+            {{ log.actor_email or '—' }}
+          </td>
+          <td class="px-5 py-3 text-xs">
+            {% if log.target_type %}
+            <span class="text-gray-400 mr-1">{{ log.target_type }}</span>
+            {% endif %}
+            <span class="text-gray-700 dark:text-gray-300 font-mono">{{ log.target_id or '—' }}</span>
+          </td>
+          <td class="px-5 py-3 text-xs text-gray-500 dark:text-gray-400 max-w-48 truncate">
+            {{ log.details or '—' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="px-5 py-12 text-center text-sm text-gray-400">
+            No audit events yet{% if action_filter %} matching "{{ action_filter }}"{% endif %}.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  {% if pages > 1 %}
+  <div class="flex items-center justify-between mt-4 text-sm">
+    <span class="text-gray-500 dark:text-gray-400 text-xs">Page {{ page }} of {{ pages }}</span>
+    <div class="flex gap-2">
+      {% if page > 1 %}
+      <a href="?page={{ page - 1 }}&action_filter={{ action_filter }}"
+        class="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition">← Prev</a>
+      {% endif %}
+      {% if page < pages %}
+      <a href="?page={{ page + 1 }}&action_filter={{ action_filter }}"
+        class="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition">Next →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

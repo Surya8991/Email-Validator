@@ -23,20 +23,20 @@ app/
   config.py        # Settings (pydantic-settings) — reads .env
   auth.py          # Session helpers: create/delete/get session, require_auth/admin/superadmin guards
   db.py            # SQLModel engine + URL normalization (postgres:// → postgresql+psycopg2://)
-  models.py        # DB tables: Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership
+  models.py        # DB tables: Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership, UserInvite, AuditLog, SystemSetting
   schemas.py       # Pydantic DTOs (request/response)
   providers/       # base.py, bouncify.py, zerobounce.py, neverbounce.py, hunter.py, local.py, registry.py
   core/            # validator.py (strategies), csv_io.py, cache.py, retry.py
   routes/
     ui.py          # User-facing UI (auth-gated), /teams + join/cancel
-    auth_routes.py # /login, /register, /logout
-    admin.py       # /admin/* (users, teams, stats, usage, providers) — admin/superadmin only
+    auth_routes.py # /login, /register, /logout, /invite/{token}
+    admin.py       # /admin/* — users (search/filter/invite/limit), audit-log, sessions, sys-settings, teams, stats, usage, providers
     api_single.py, api_bulk.py, api_stats.py, health.py
   workers/         # bulk_worker.py (BackgroundTasks fallback for local dev)
   templates/
     base.html      # Main nav with avatar dropdown + admin tab (admin/superadmin only) + Teams link
     auth/          # login.html, register.html (split-panel design)
-    admin/         # base.html (dark indigo sidebar), users.html, stats.html, usage.html, providers.html, teams.html, team_detail.html
+    admin/         # base.html (sectioned sidebar: Data/Access/Config/Superadmin), users.html (search+filter+invite+limit), stats.html (A6 dashboard), audit_log.html, sessions.html, sys_settings.html, usage.html, providers.html, teams.html, team_detail.html
     teams.html     # User-facing team cards with join/cancel request
 api/
   index.py         # Mangum handler for Vercel (sys.path guard + handler = Mangum(app))
@@ -70,7 +70,7 @@ Visit http://localhost:8000
 # Add DATABASE_URL to .env first, then:
 python scripts/init_db.py
 ```
-Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`
+Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`, `userinvite`, `auditlog`, `systemsetting`
 
 ## Env Vars
 ### Required for Vercel

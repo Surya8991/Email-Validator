@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>{% block title %}Admin{% endblock %} — Email Validator</title>
+  <title>{% block title %}Admin{% endblock %} — EmailValidator</title>
   <script>
     if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
       document.documentElement.classList.add('dark');
@@ -15,61 +15,98 @@
     @layer utilities {
       .badge-valid   { @apply bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 text-xs px-2 py-0.5 rounded-full font-semibold; }
       .badge-invalid { @apply bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 text-xs px-2 py-0.5 rounded-full font-semibold; }
-      .card { @apply bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl; }
+      .card { @apply bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm; }
       .input-base { @apply border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400; }
       .btn-primary { @apply bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition; }
+      .btn-ghost { @apply text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 px-3 py-1.5 rounded-lg text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800; }
+      .nav-item { @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors; }
+      .nav-active { @apply bg-indigo-700 text-white; }
+      .nav-idle { @apply text-indigo-200 hover:bg-indigo-800/60 hover:text-white; }
+      .nav-super-active { @apply bg-purple-700/80 text-purple-100; }
+      .nav-super-idle { @apply text-purple-300 hover:bg-purple-800/50 hover:text-purple-100; }
     }
   </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen flex flex-col">
 
   <!-- Top bar -->
-  <header class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 h-14 flex items-center px-5 gap-3 shrink-0 z-10">
-    <div class="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">✉</div>
-    <span class="font-bold text-sm text-gray-900 dark:text-white">Email<span class="text-indigo-600 dark:text-indigo-400">Validator</span></span>
+  <header class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 h-14 flex items-center px-5 gap-3 shrink-0 z-10 shadow-sm">
+    <a href="/" class="flex items-center gap-2 shrink-0">
+      <div class="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center text-white text-xs font-bold shadow">✉</div>
+      <span class="font-bold text-sm text-gray-900 dark:text-white">Email<span class="text-indigo-600 dark:text-indigo-400">Validator</span></span>
+    </a>
+    {% if current_user.role == 'superadmin' %}
+    <span class="bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 text-xs font-bold px-2 py-0.5 rounded-full">SUPERADMIN</span>
+    {% else %}
     <span class="bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-xs font-bold px-2 py-0.5 rounded-full">ADMIN</span>
+    {% endif %}
+
     <div class="ml-auto flex items-center gap-3">
-      <a href="/" class="text-xs text-gray-400 hover:text-indigo-500 transition font-medium">← Back to App</a>
+      <button onclick="toggleDark()" title="Toggle dark mode"
+        class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition text-base" id="dark-toggle">🌙</button>
       <span class="text-gray-300 dark:text-gray-700">|</span>
-      <span class="text-xs text-gray-500 dark:text-gray-400">{{ current_user.email }}</span>
+      <a href="/" class="text-xs text-gray-400 hover:text-indigo-500 transition font-medium">← Back to App</a>
+      <span class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-36 hidden md:block">{{ current_user.email }}</span>
     </div>
   </header>
 
-  <div class="flex flex-1">
+  <div class="flex flex-1 overflow-hidden">
 
     <!-- Sidebar -->
-    <aside class="w-52 shrink-0 bg-indigo-950 dark:bg-gray-900 flex flex-col">
-      <nav class="flex-1 px-3 py-5 space-y-0.5">
+    <aside class="w-56 shrink-0 bg-indigo-950 dark:bg-gray-950 flex flex-col border-r border-indigo-900/50 dark:border-gray-800">
+      <nav class="flex-1 px-3 py-5 space-y-0.5 overflow-y-auto">
         {% set ap = admin_active | default('') %}
-        <a href="/admin/users"
-          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-            {% if ap == 'users' %}bg-indigo-700 text-white{% else %}text-indigo-200 hover:bg-indigo-800/60 hover:text-white{% endif %}">
-          👥 Users
+
+        <a href="/admin" class="nav-item {% if ap == 'stats' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">📊</span> Dashboard
         </a>
-        <a href="/admin"
-          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-            {% if ap == 'stats' %}bg-indigo-700 text-white{% else %}text-indigo-200 hover:bg-indigo-800/60 hover:text-white{% endif %}">
-          📊 System Stats
+
+        <div class="pt-4 pb-1 px-2">
+          <p class="text-xs font-semibold uppercase tracking-wider text-indigo-500/60">Data</p>
+        </div>
+        <a href="/admin/usage" class="nav-item {% if ap == 'usage' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">📋</span> Usage
         </a>
-        <a href="/admin/usage"
-          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-            {% if ap == 'usage' %}bg-indigo-700 text-white{% else %}text-indigo-200 hover:bg-indigo-800/60 hover:text-white{% endif %}">
-          📋 Usage
+        <a href="/admin/audit-log" class="nav-item {% if ap == 'audit' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">🔍</span> Audit Log
         </a>
-        <a href="/admin/teams"
-          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-            {% if ap == 'teams' %}bg-indigo-700 text-white{% else %}text-indigo-200 hover:bg-indigo-800/60 hover:text-white{% endif %}">
-          👥 Teams
+
+        <div class="pt-4 pb-1 px-2">
+          <p class="text-xs font-semibold uppercase tracking-wider text-indigo-500/60">Access</p>
+        </div>
+        <a href="/admin/users" class="nav-item {% if ap == 'users' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">👥</span> Users
         </a>
-        <a href="/admin/providers"
-          class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-            {% if ap == 'providers' %}bg-indigo-700 text-white{% else %}text-indigo-200 hover:bg-indigo-800/60 hover:text-white{% endif %}">
-          ⚙ Providers
+        <a href="/admin/teams" class="nav-item {% if ap == 'teams' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">🏢</span> Teams
         </a>
+
+        <div class="pt-4 pb-1 px-2">
+          <p class="text-xs font-semibold uppercase tracking-wider text-indigo-500/60">Config</p>
+        </div>
+        <a href="/admin/providers" class="nav-item {% if ap == 'providers' %}nav-active{% else %}nav-idle{% endif %}">
+          <span class="text-base leading-none">⚙</span> Providers
+        </a>
+
+        {% if current_user.role == 'superadmin' %}
+        <div class="pt-4 pb-1 px-2">
+          <p class="text-xs font-semibold uppercase tracking-wider text-purple-500/60">Superadmin</p>
+        </div>
+        <a href="/admin/sessions" class="nav-item {% if ap == 'sessions' %}nav-super-active{% else %}nav-super-idle{% endif %}">
+          <span class="text-base leading-none">🔐</span> Sessions
+        </a>
+        <a href="/admin/sys-settings" class="nav-item {% if ap == 'sys-settings' %}nav-super-active{% else %}nav-super-idle{% endif %}">
+          <span class="text-base leading-none">🛠</span> System Settings
+        </a>
+        {% endif %}
+
       </nav>
-      <div class="px-4 py-4 border-t border-indigo-900">
+
+      <div class="px-3 py-4 border-t border-indigo-900/60">
+        <div class="px-3 py-1 text-xs text-indigo-400/70 truncate mb-1">{{ current_user.email }}</div>
         <form method="post" action="/logout">
-          <button type="submit" class="w-full text-left text-xs text-indigo-400 hover:text-red-400 transition font-medium px-3 py-1.5">
+          <button type="submit"
+            class="w-full text-left flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-red-400 hover:bg-red-900/20 hover:text-red-300 transition font-medium">
             → Sign out
           </button>
         </form>
@@ -83,5 +120,16 @@
 
   </div>
 
+  <script>
+    function toggleDark() {
+      const html = document.getElementById('html-root');
+      const isDark = html.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      document.getElementById('dark-toggle').textContent = isDark ? '☀' : '🌙';
+    }
+    if (document.documentElement.classList.contains('dark')) {
+      document.getElementById('dark-toggle').textContent = '☀';
+    }
+  </script>
 </body>
 </html>

@@ -7,7 +7,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.auth import RequiresAdmin, RequiresAuth
+from app.auth import RequiresAdmin, RequiresAuth, RequiresMaintenance
 from app.config import settings
 from app.db import create_db_tables
 from app.providers import registry
@@ -93,6 +93,26 @@ async def _requires_auth(_: Request, __: RequiresAuth) -> RedirectResponse:
 @app.exception_handler(RequiresAdmin)
 async def _requires_admin(_: Request, __: RequiresAdmin) -> HTMLResponse:
     return HTMLResponse("<h1>403 — Admin access required</h1>", status_code=403)
+
+
+_MAINTENANCE_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'/>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
+    "<title>Maintenance — EmailValidator</title>"
+    "<script src='https://cdn.tailwindcss.com'></script></head>"
+    "<body class='min-h-screen bg-gray-50 flex items-center justify-center p-6'>"
+    "<div class='max-w-md text-center'><div class='text-6xl mb-6'>🔧</div>"
+    "<h1 class='text-2xl font-bold text-gray-900 mb-2'>Maintenance in progress</h1>"
+    "<p class='text-gray-500'>We'll be back shortly. Admins can still sign in.</p>"
+    "<a href='/login' class='mt-6 inline-block bg-indigo-600 text-white"
+    " px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700'>Sign in</a>"
+    "</div></body></html>"
+)
+
+
+@app.exception_handler(RequiresMaintenance)
+async def _requires_maintenance(_: Request, __: RequiresMaintenance) -> HTMLResponse:
+    return HTMLResponse(_MAINTENANCE_HTML, status_code=503)
 
 
 app.include_router(auth_routes.router)

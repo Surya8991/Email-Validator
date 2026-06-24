@@ -1,11 +1,16 @@
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+from sqlmodel import Session
 
+from app.auth import get_current_user
 from app.core.validator import validate_with_cache
+from app.db import engine
 from app.schemas import ProviderResult, SingleVerifyRequest, SingleVerifyResponse
 
 router = APIRouter()
@@ -53,6 +58,26 @@ async def verify_single_htmx(request: Request):
         ttl_days: int | None = int(ttl_raw) if ttl_raw else None
     except (ValueError, TypeError):
         ttl_days = None
+
+    with Session(engine) as db:
+        current_user = get_current_user(request, db)
+        if current_user and current_user.validation_limit is not None:
+            month_start = datetime.utcnow().replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            count = db.execute(
+                text(
+                    "SELECT COUNT(*) FROM emailresult e "
+                    "JOIN job j ON j.id = e.job_id "
+                    "WHERE j.user_id = :uid AND e.created_at >= :ms"
+                ),
+                {"uid": current_user.id, "ms": month_start},
+            ).scalar() or 0
+            if count >= current_user.validation_limit:
+                return templates.TemplateResponse(
+                    request, "partials/single_result.html",
+                    {"limit_exceeded": True, "limit": current_user.validation_limit},
+                )
 
     t0 = time.monotonic()
     verdict, provider_results, cache_row = await validate_with_cache(

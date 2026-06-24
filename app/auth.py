@@ -6,7 +6,7 @@ from fastapi import Depends, Request
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models import User, UserSession
+from app.models import SystemSetting, User, UserSession
 
 SESSION_COOKIE = "ev_session"
 SESSION_TTL_DAYS = 7
@@ -17,6 +17,10 @@ class RequiresAuth(Exception):
 
 
 class RequiresAdmin(Exception):
+    pass
+
+
+class RequiresMaintenance(Exception):
     pass
 
 
@@ -67,6 +71,10 @@ def require_auth(request: Request, db: Session = Depends(get_session)) -> User:
     user = get_current_user(request, db)
     if not user or not user.is_active:
         raise RequiresAuth()
+    if user.role not in ("admin", "superadmin"):
+        setting = db.get(SystemSetting, "maintenance_mode")
+        if setting and setting.value == "1":
+            raise RequiresMaintenance()
     return user
 
 

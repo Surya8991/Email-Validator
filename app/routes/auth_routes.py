@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from app.auth import SESSION_COOKIE, SESSION_TTL_DAYS, create_user_session, delete_user_session
 from app.config import settings
 from app.db import get_session
-from app.models import User, UserInvite
+from app.models import SystemSetting, User, UserInvite
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -76,6 +76,11 @@ async def register_post(
     confirm_password: str = Form(...),
     db: Session = Depends(get_session),
 ):
+    reg_open = db.get(SystemSetting, "registration_open")
+    if reg_open and reg_open.value == "0":
+        return templates.TemplateResponse(request, "auth/register.html", {
+            "error": "Registration is currently closed. Contact an admin for an invite."
+        }, status_code=403)
     if password != confirm_password:
         return templates.TemplateResponse(request, "auth/register.html", {
             "error": "Passwords do not match."

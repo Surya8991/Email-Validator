@@ -1,0 +1,104 @@
+{% extends "admin/base.html" %}
+{% block title %}System Settings{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">System Settings</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Platform-wide configuration — superadmin only</p>
+  </div>
+
+  {% if saved %}
+  <div class="mb-5 px-4 py-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl text-sm text-green-700 dark:text-green-300 flex items-center gap-2">
+    ✅ Settings saved.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/admin/sys-settings" class="space-y-4">
+
+    <!-- Registration -->
+    <div class="card p-5">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1">
+          <p class="text-sm font-semibold text-gray-900 dark:text-white">Open registration</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Allow new users to self-register at /register. When off, only invited users can join.</p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer mt-0.5 shrink-0">
+          <input type="checkbox" name="registration_open" value="1"
+            {% if current.get('registration_open', '1') != '0' %}checked{% endif %}
+            class="sr-only peer"/>
+          <div class="w-10 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:ring-2 peer-focus:ring-indigo-400 rounded-full peer
+            peer-checked:bg-indigo-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5
+            after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-4"></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Maintenance mode -->
+    <div class="card p-5">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1">
+          <p class="text-sm font-semibold text-gray-900 dark:text-white">Maintenance mode</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            When enabled, non-admin users see a maintenance notice instead of the app.
+            Admins and superadmins are unaffected.
+          </p>
+        </div>
+        <label class="relative inline-flex items-center cursor-pointer mt-0.5 shrink-0">
+          <input type="checkbox" name="maintenance_mode" value="1"
+            {% if current.get('maintenance_mode') == '1' %}checked{% endif %}
+            class="sr-only peer"/>
+          <div class="w-10 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:ring-2 peer-focus:ring-red-400 rounded-full peer
+            peer-checked:bg-red-500 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5
+            after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-4"></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Default validation limit -->
+    <div class="card p-5">
+      <p class="text-sm font-semibold text-gray-900 dark:text-white mb-1">Default monthly validation limit</p>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        Applied to new users on invite acceptance. Leave blank for unlimited.
+        Existing users are not affected — use the Users page to set individual limits.
+      </p>
+      <div class="flex items-center gap-3">
+        <input type="number" name="default_validation_limit" min="1" max="1000000"
+          value="{{ current.get('default_validation_limit', '') }}"
+          placeholder="e.g. 5000 (blank = unlimited)"
+          class="input-base w-48"/>
+        <span class="text-xs text-gray-400">validations / month</span>
+      </div>
+    </div>
+
+    <div class="flex justify-end pt-2">
+      <button type="submit" class="btn-primary px-6">Save settings</button>
+    </div>
+  </form>
+
+  <script>
+    // checkboxes send nothing when unchecked — we need to send "0"
+    document.querySelector('form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const form = e.target;
+      const fd = new FormData(form);
+      ['registration_open', 'maintenance_mode'].forEach(k => {
+        if (!fd.has(k)) fd.append(k, '0');
+      });
+      const params = new URLSearchParams();
+      for (const [k, v] of fd.entries()) params.append(k, v);
+      fetch(form.action, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: params.toString(),
+        redirect: 'follow',
+      }).then(r => {
+        if (r.redirected) window.location.href = r.url;
+        else window.location.reload();
+      });
+    });
+  </script>
+
+</div>
+{% endblock %}

@@ -1,4 +1,10 @@
-﻿{% set verdict = result.verdict %}
+﻿{% if limit_exceeded %}
+<div class="border border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/30 rounded-xl p-4 mt-2">
+  <p class="font-semibold text-sm text-amber-700 dark:text-amber-300 mb-1">⚠ Monthly limit reached</p>
+  <p class="text-xs text-amber-600 dark:text-amber-400">You've used all {{ limit }} validations for this month. Contact an admin to increase your limit.</p>
+</div>
+{% else %}
+{% set verdict = result.verdict %}
 {% set conf = result.confidence | default(0) %}
 {% set conf_color = 'bg-green-500' if conf >= 75 else ('bg-yellow-400' if conf >= 50 else 'bg-red-400') %}
 
@@ -83,3 +89,4 @@ function copyEmail(email) {
   });
 }
 </script>
+{% endif %}
