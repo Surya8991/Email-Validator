@@ -25,11 +25,9 @@ except ImportError:
 
 from sqlmodel import SQLModel
 
+import app.models  # noqa: F401
 from app.config import settings
 from app.db import engine
-
-# Import models so SQLModel.metadata knows about them
-import app.models  # noqa: F401
 
 
 def main() -> None:
