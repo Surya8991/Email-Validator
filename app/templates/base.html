@@ -35,9 +35,7 @@
     <!-- Brand -->
     <div class="px-5 py-5 border-b border-gray-100 dark:border-gray-800">
       <a href="/" class="flex items-center gap-2.5 group">
-        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white text-sm font-bold shadow-sm">
-          ✉
-        </div>
+        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white text-sm font-bold shadow-sm">✉</div>
         <div class="leading-tight">
           <div class="font-bold text-gray-900 dark:text-white text-sm">Email</div>
           <div class="font-bold text-indigo-600 dark:text-indigo-400 text-sm -mt-0.5">Validator</div>
@@ -46,36 +44,30 @@
     </div>
 
     <!-- Nav -->
-    <nav class="flex-1 px-3 py-4 space-y-0.5" id="sidebar-nav">
+    <nav class="flex-1 px-3 py-4 space-y-0.5">
       {% set active = active_page | default('') %}
-      <a href="/" data-page="dashboard"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'dashboard' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'dashboard' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">📊</span> Dashboard
       </a>
-      <a href="/validate" data-page="validate"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'validate' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/validate" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'validate' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">✅</span> Validate
       </a>
-      <a href="/cache" data-page="cache"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'cache' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/cache" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'cache' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">⚡</span> Cache Browser
       </a>
-      <a href="/analytics" data-page="analytics"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'analytics' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/analytics" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'analytics' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">📈</span> Analytics
       </a>
-      <a href="/jobs" data-page="jobs"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'jobs' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/jobs" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'jobs' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">📋</span> History
       </a>
-      <a href="/settings" data-page="settings"
-        class="nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
-          {% if active == 'settings' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
+      <a href="/settings" class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+        {% if active == 'settings' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
         <span class="text-base leading-none">⚙</span> Settings
       </a>
     </nav>
@@ -83,42 +75,417 @@
     <!-- Provider status -->
     <div class="px-4 py-3 border-t border-gray-100 dark:border-gray-800">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Providers</p>
-      <div id="sidebar-providers">
-        <!-- populated by JS below -->
-      </div>
+      <div id="sidebar-providers"></div>
     </div>
 
-    <!-- Footer -->
-    <div class="px-4 py-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
-      <a href="/docs" target="_blank" class="text-xs text-gray-400 hover:text-indigo-500 transition">API Docs</a>
-      <button onclick="toggleDark()" id="dark-toggle"
-        class="text-lg leading-none text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition" title="Toggle dark mode">
-        🌙
-      </button>
+    <!-- Footer: API docs | Help | Dark toggle -->
+    <div class="px-4 py-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-1">
+      <a href="/docs" target="_blank"
+        class="text-xs text-gray-400 hover:text-indigo-500 transition truncate">API Docs</a>
+      <div class="flex items-center gap-1 shrink-0">
+        <button onclick="openHelp()" id="help-btn"
+          title="Help & Reference"
+          class="w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300
+                 text-xs font-bold hover:bg-indigo-200 dark:hover:bg-indigo-800 transition flex items-center justify-center">
+          ?
+        </button>
+        <button onclick="toggleDark()" id="dark-toggle"
+          class="text-lg leading-none text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition w-7 h-7 flex items-center justify-center"
+          title="Toggle dark mode">
+          🌙
+        </button>
+      </div>
     </div>
   </aside>
 
-  <!-- Main -->
+  <!-- Main content -->
   <div class="ml-56 flex-1 min-h-screen">
     <main class="max-w-5xl mx-auto px-6 py-8">
       {% block content %}{% endblock %}
     </main>
   </div>
 
+  <!-- ── Help overlay ──────────────────────────────────────────────────── -->
+  <div id="help-overlay"
+    class="fixed inset-0 bg-black/30 z-40 opacity-0 pointer-events-none transition-opacity duration-200"
+    onclick="closeHelp()"></div>
+
+  <!-- ── Help panel ───────────────────────────────────────────────────── -->
+  <div id="help-panel"
+    class="fixed top-0 right-0 bottom-0 z-50 w-96 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800
+           shadow-2xl flex flex-col transition-transform duration-200 translate-x-full">
+
+    <!-- Panel header -->
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800 shrink-0">
+      <div class="flex items-center gap-2">
+        <div class="w-6 h-6 bg-indigo-600 rounded-md flex items-center justify-center text-white text-xs font-bold">?</div>
+        <h2 class="font-bold text-gray-900 dark:text-white text-sm">Help &amp; Reference</h2>
+      </div>
+      <button onclick="closeHelp()"
+        class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none transition w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+        ×
+      </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-100 dark:border-gray-800 shrink-0 overflow-x-auto scrollbar-none">
+      <button data-tab="start"       class="help-tab active-help-tab px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400">Quick Start</button>
+      <button data-tab="strategies"  class="help-tab px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Strategies</button>
+      <button data-tab="providers"   class="help-tab px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Providers</button>
+      <button data-tab="bulk"        class="help-tab px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">Bulk CSV</button>
+      <button data-tab="api"         class="help-tab px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">API</button>
+    </div>
+
+    <!-- Scrollable content -->
+    <div class="flex-1 overflow-y-auto">
+
+      <!-- ── Quick Start ── -->
+      <div data-section="start" class="help-section px-5 py-5 space-y-5 text-sm">
+        <div>
+          <h3 class="font-bold text-gray-900 dark:text-white mb-3">Get running in 3 steps</h3>
+          <ol class="space-y-3">
+            <li class="flex gap-3">
+              <span class="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 text-xs font-bold flex items-center justify-center shrink-0">1</span>
+              <div>
+                <p class="font-medium text-gray-800 dark:text-gray-100">Set your API key</p>
+                <p class="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Add <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">BOUNCIFY_API_KEY=your_key</code> to <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">.env</code></p>
+              </div>
+            </li>
+            <li class="flex gap-3">
+              <span class="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 text-xs font-bold flex items-center justify-center shrink-0">2</span>
+              <div>
+                <p class="font-medium text-gray-800 dark:text-gray-100">Start the server</p>
+                <p class="text-gray-500 dark:text-gray-400 text-xs mt-0.5"><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">python -m uvicorn app.main:app --reload</code></p>
+              </div>
+            </li>
+            <li class="flex gap-3">
+              <span class="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 text-xs font-bold flex items-center justify-center shrink-0">3</span>
+              <div>
+                <p class="font-medium text-gray-800 dark:text-gray-100">Validate an email</p>
+                <p class="text-gray-500 dark:text-gray-400 text-xs mt-0.5">Go to <a href="/validate" class="text-indigo-500 hover:underline">/validate</a> and enter any email</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+          <h3 class="font-bold text-gray-900 dark:text-white mb-3">Pages</h3>
+          <div class="space-y-2.5">
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">📊</span>
+              <div><a href="/" class="font-medium text-indigo-500 hover:underline">Dashboard</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Stats overview, quick validate, recent bulk jobs</p></div>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">✅</span>
+              <div><a href="/validate" class="font-medium text-indigo-500 hover:underline">Validate</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Single email or bulk CSV — pick strategy and providers</p></div>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">⚡</span>
+              <div><a href="/cache" class="font-medium text-indigo-500 hover:underline">Cache Browser</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Search cached results, delete entries, purge expired</p></div>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">📈</span>
+              <div><a href="/analytics" class="font-medium text-indigo-500 hover:underline">Analytics</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Verdict trends, top invalid domains, cache stats</p></div>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">📋</span>
+              <div><a href="/jobs" class="font-medium text-indigo-500 hover:underline">History</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">All bulk jobs — status, progress, download CSV</p></div>
+            </div>
+            <div class="flex gap-2">
+              <span class="text-base leading-none mt-0.5">⚙</span>
+              <div><a href="/settings" class="font-medium text-indigo-500 hover:underline">Settings</a>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Provider key status, cache TTL, domain reputation lookup</p></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+          <h3 class="font-bold text-gray-900 dark:text-white mb-2">Verdict meanings</h3>
+          <div class="space-y-1.5">
+            <div class="flex items-center gap-2"><span class="badge-valid">valid</span><span class="text-xs text-gray-500 dark:text-gray-400">Email exists and can receive mail</span></div>
+            <div class="flex items-center gap-2"><span class="badge-invalid">invalid</span><span class="text-xs text-gray-500 dark:text-gray-400">Email doesn't exist or domain has no MX</span></div>
+            <div class="flex items-center gap-2"><span class="badge-risky">risky</span><span class="text-xs text-gray-500 dark:text-gray-400">Catch-all, disposable, or role address</span></div>
+            <div class="flex items-center gap-2"><span class="badge-unknown">unknown</span><span class="text-xs text-gray-500 dark:text-gray-400">API error or inconclusive — not cached</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Strategies ── -->
+      <div data-section="strategies" class="help-section hidden px-5 py-5 space-y-4 text-sm">
+        <p class="text-gray-500 dark:text-gray-400 text-xs">Choose how providers are called per validation. Affects cost and accuracy.</p>
+
+        <div class="space-y-3">
+          <div class="card p-3.5">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="font-semibold text-gray-900 dark:text-white">⚡ Bouncify Only</span>
+              <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">$</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Single provider, fastest result. Uses 1 Bouncify credit per email. Best for quick checks when you trust Bouncify's accuracy.</p>
+          </div>
+          <div class="card p-3.5">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="font-semibold text-gray-900 dark:text-white">🏠 Local First</span>
+              <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">¢</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Runs free local checks first (syntax, MX, disposable). Only calls paid API if local check returns non-<code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">invalid</code>. Saves up to 30-50% credits on dirty lists.</p>
+          </div>
+          <div class="card p-3.5">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="font-semibold text-gray-900 dark:text-white">🗳 Consensus</span>
+              <span class="text-xs font-mono bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-0.5 rounded">$$$</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Calls all enabled providers in parallel and takes a majority vote. Most accurate — good for high-value lists where false positives/negatives are costly.</p>
+          </div>
+          <div class="card p-3.5">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="font-semibold text-gray-900 dark:text-white">🌊 Waterfall</span>
+              <span class="text-xs font-mono bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 px-2 py-0.5 rounded">$$</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Tries providers in order (local → Hunter → Bouncify → ZeroBounce). Stops as soon as a confident verdict is reached. Balances accuracy and cost.</p>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-3">
+          <p class="text-xs text-gray-400">Results are cached for 30 days — re-validating a cached email costs zero credits regardless of strategy.</p>
+        </div>
+      </div>
+
+      <!-- ── Providers ── -->
+      <div data-section="providers" class="help-section hidden px-5 py-5 space-y-4 text-sm">
+        <p class="text-gray-500 dark:text-gray-400 text-xs">Set API keys in <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">.env</code> to enable paid providers. Restart the server after changes.</p>
+
+        <div class="space-y-3">
+          <div class="card p-3.5 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-gray-900 dark:text-white">🏠 Local</span>
+              <span class="badge-valid">always on</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Free built-in checks: email syntax, domain MX record, disposable domain blocklist (50k+ domains), role-address detection (<code>admin@</code>, <code>info@</code>, etc.), free-provider flag. No API key needed.</p>
+          </div>
+          <div class="card p-3.5 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-gray-900 dark:text-white">Bouncify</span>
+              <span class="text-xs text-gray-400 font-mono">BOUNCIFY_API_KEY</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Primary paid provider. Supports single + bulk (job-based). Maps: <code>deliverable→valid</code>, <code>undeliverable→invalid</code>, <code>accept_all→risky</code>.</p>
+            <a href="https://bouncify.io" target="_blank" class="text-xs text-indigo-500 hover:underline">bouncify.io ↗</a>
+          </div>
+          <div class="card p-3.5 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-gray-900 dark:text-white">ZeroBounce</span>
+              <span class="text-xs text-gray-400 font-mono">ZEROBOUNCE_API_KEY</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Single + bulk (CSV upload). Includes abuse, spam-trap, and catch-all detection. Maps extra statuses like <code>do_not_mail→risky</code>.</p>
+          </div>
+          <div class="card p-3.5 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-gray-900 dark:text-white">NeverBounce</span>
+              <span class="text-xs text-gray-400 font-mono">NEVERBOUNCE_API_KEY</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Single + bulk (job-based). Granular status: <code>valid</code>, <code>invalid</code>, <code>disposable</code>, <code>catchall</code>.</p>
+          </div>
+          <div class="card p-3.5 space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-gray-900 dark:text-white">Hunter.io</span>
+              <span class="text-xs text-gray-400 font-mono">HUNTER_API_KEY</span>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Single only (no bulk endpoint — uses concurrent individual calls). Includes webmail and disposable detection.</p>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-3 space-y-1">
+          <p class="text-xs text-gray-500 dark:text-gray-400">Each provider has an optional daily cap (<code>BOUNCIFY_DAILY_CAP</code> etc.) to prevent runaway credit usage.</p>
+          <a href="/settings" class="text-xs text-indigo-500 hover:underline block">View provider status in Settings →</a>
+        </div>
+      </div>
+
+      <!-- ── Bulk CSV ── -->
+      <div data-section="bulk" class="help-section hidden px-5 py-5 space-y-4 text-sm">
+        <div>
+          <h3 class="font-bold text-gray-900 dark:text-white mb-2">CSV format</h3>
+          <div class="card p-3 bg-gray-50 dark:bg-gray-800/50 font-mono text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
+            <div class="text-gray-400">email,name,source</div>
+            <div>john@example.com,John Doe,website</div>
+            <div>jane@gmail.com,Jane Smith,signup</div>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Column named <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">email</code> is auto-detected. If not found, the first column is used. All extra columns are preserved in the output CSV.</p>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-gray-900 dark:text-white">Tips</h3>
+          <ul class="text-xs text-gray-500 dark:text-gray-400 space-y-1.5 list-disc list-inside">
+            <li>UTF-8 encoding recommended (BOM-safe)</li>
+            <li>Duplicate emails are only validated once — cache handles the rest</li>
+            <li>On Vercel Hobby, keep CSV under 50 emails (10s function limit)</li>
+            <li>On Vercel Pro or Railway/Render, large CSVs work fine (60s+)</li>
+            <li>Progress updates every 20 emails (chunk size)</li>
+          </ul>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-gray-900 dark:text-white">Output CSV columns</h3>
+          <div class="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">verdict</code> — final verdict (valid/invalid/risky/unknown)</div>
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">{provider}_status</code> — per-provider result</div>
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">from_cache</code> — true if served from 30-day cache</div>
+            <div>All original columns are preserved</div>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-gray-900 dark:text-white">Smart export</h3>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Filter your download by verdict — perfect for sending only valid emails to your ESP:</p>
+          <div class="flex flex-wrap gap-2">
+            <a href="#" class="text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 px-2 py-1 rounded font-mono hover:bg-indigo-50 dark:hover:bg-indigo-900/30">?verdict=all</a>
+            <a href="#" class="text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-1 rounded font-mono">?verdict=valid</a>
+            <a href="#" class="text-xs bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-1 rounded font-mono">?verdict=invalid</a>
+            <a href="#" class="text-xs bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 px-2 py-1 rounded font-mono">?verdict=risky</a>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-3">
+          <a href="/samples/sample_emails.csv" download
+            class="inline-flex items-center gap-2 text-xs text-indigo-500 hover:underline font-medium">
+            ⬇ Download sample CSV (15 emails)
+          </a>
+        </div>
+      </div>
+
+      <!-- ── API ── -->
+      <div data-section="api" class="help-section hidden px-5 py-5 space-y-4 text-sm">
+        <p class="text-gray-500 dark:text-gray-400 text-xs">Full interactive documentation at <a href="/docs" target="_blank" class="text-indigo-500 hover:underline">/docs ↗</a></p>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-gray-900 dark:text-white text-xs uppercase tracking-wider text-gray-400 mb-1">Verification</h3>
+          <div class="space-y-2">
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs font-mono bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-bold">POST</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/verify</code>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">JSON body: <code>{"email":"x@y.com","providers":["bouncify"],"strategy":"bouncify_only"}</code></p>
+            </div>
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs font-mono bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-bold">POST</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/bulk</code>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">Multipart form: <code>file</code> (CSV), <code>providers</code>, <code>strategy</code></p>
+            </div>
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded font-bold">GET</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/bulk/{id}/download</code>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">Add <code>?verdict=valid|invalid|risky|all</code> to filter</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-xs uppercase tracking-wider text-gray-400 mb-1">Analytics</h3>
+          <div class="space-y-2">
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded font-bold">GET</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/stats</code>
+                <span class="text-xs text-gray-400">— totals, verdicts, daily trend</span>
+              </div>
+            </div>
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded font-bold">GET</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/domain/{domain}</code>
+                <span class="text-xs text-gray-400">— domain reputation</span>
+              </div>
+            </div>
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded font-bold">GET</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/health</code>
+                <span class="text-xs text-gray-400">— provider status</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="font-bold text-xs uppercase tracking-wider text-gray-400 mb-1">Cache management</h3>
+          <div class="space-y-2">
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-300 px-1.5 py-0.5 rounded font-bold">DEL</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/cache/{id}</code>
+                <span class="text-xs text-gray-400">— delete one entry</span>
+              </div>
+            </div>
+            <div class="card p-2.5">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-bold">POST</span>
+                <code class="text-xs text-gray-800 dark:text-gray-200">/api/cache/purge</code>
+                <span class="text-xs text-gray-400">— delete all expired</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-3">
+          <a href="/docs" target="_blank"
+            class="btn-primary inline-flex items-center gap-2 w-full justify-center py-2 text-xs">
+            Open Interactive API Docs ↗
+          </a>
+        </div>
+      </div>
+
+    </div><!-- end scrollable -->
+  </div><!-- end help panel -->
+
   <script>
+    /* ── Dark mode ── */
     function toggleDark() {
       const html = document.getElementById('html-root');
       const isDark = html.classList.toggle('dark');
       localStorage.setItem('theme', isDark ? 'dark' : 'light');
       document.getElementById('dark-toggle').textContent = isDark ? '☀' : '🌙';
     }
-
-    // Set correct icon on load
     if (document.documentElement.classList.contains('dark')) {
       document.getElementById('dark-toggle').textContent = '☀';
     }
 
-    // Populate provider status from health API
+    /* ── Help panel ── */
+    function openHelp() {
+      document.getElementById('help-panel').classList.remove('translate-x-full');
+      document.getElementById('help-overlay').classList.remove('opacity-0','pointer-events-none');
+      document.getElementById('help-overlay').classList.add('opacity-100');
+    }
+    function closeHelp() {
+      document.getElementById('help-panel').classList.add('translate-x-full');
+      document.getElementById('help-overlay').classList.add('opacity-0','pointer-events-none');
+      document.getElementById('help-overlay').classList.remove('opacity-100');
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeHelp(); });
+
+    /* ── Help tabs ── */
+    document.querySelectorAll('.help-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.help-tab').forEach(b => {
+          b.classList.remove('active-help-tab','border-indigo-500','text-indigo-600','dark:text-indigo-400');
+          b.classList.add('border-transparent','text-gray-500','dark:text-gray-400');
+        });
+        btn.classList.add('active-help-tab','border-indigo-500','text-indigo-600');
+        btn.classList.remove('border-transparent','text-gray-500');
+        document.querySelectorAll('.help-section').forEach(s => s.classList.add('hidden'));
+        document.querySelector(`[data-section="${tab}"]`).classList.remove('hidden');
+      });
+    });
+
+    /* ── Provider status ── */
     fetch('/api/health').then(r => r.json()).then(data => {
       const el = document.getElementById('sidebar-providers');
       const all = ['local','bouncify','zerobounce','neverbounce','hunter'];
