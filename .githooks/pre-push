@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Git pre-push hook — runs scripts/pre_push_check.sh automatically.
+# Install once with: git config core.hooksPath .githooks
+SCRIPT="$(git rev-parse --show-toplevel)/scripts/pre_push_check.sh"
+if [ -f "$SCRIPT" ]; then
+  bash "$SCRIPT"
+else
+  echo "pre_push_check.sh not found — skipping pre-push checks"
+fi
