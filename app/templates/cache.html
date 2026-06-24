@@ -1,12 +1,12 @@
-{% extends "base.html" %}
-{% block title %}Cache Browser — Email Validator{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Cache Browser - Email Validator{% endblock %}
 {% block content %}
 <div class="space-y-6">
 
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Cache Browser</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">30-day result cache — browse, search, purge</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Browse, search, and purge cached results</p>
     </div>
     <button
       hx-post="/api/cache/purge"

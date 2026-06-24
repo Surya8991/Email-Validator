@@ -38,3 +38,7 @@ def create_db_tables() -> None:
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def is_postgres() -> bool:
+    return _db_url().startswith("postgresql")

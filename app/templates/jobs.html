@@ -1,11 +1,11 @@
-{% extends "base.html" %}
-{% block title %}History — Email Validator{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}History - Email Validator{% endblock %}
 {% block content %}
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Validation History</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Bulk jobs — last 50</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Bulk jobs - last 50</p>
     </div>
     <a href="/validate" class="btn-primary">+ New Job</a>
   </div>
@@ -33,7 +33,7 @@
         {% for job in jobs %}
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
           <td class="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">#{{ job.id }}</td>
-          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-40 truncate">{{ job.filename or '—' }}</td>
+          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-40 truncate">{{ job.filename or '-' }}</td>
           <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">{{ job.strategy }}</td>
           <td class="px-4 py-3 text-gray-500 dark:text-gray-400">
             {% if job.total > 0 %}
@@ -43,7 +43,7 @@
               </div>
               <span class="text-xs">{{ job.processed }}/{{ job.total }}</span>
             </div>
-            {% else %}—{% endif %}
+            {% else %}-{% endif %}
           </td>
           <td class="px-4 py-3">
             {% if job.status == 'done' %}<span class="badge-valid">done</span>

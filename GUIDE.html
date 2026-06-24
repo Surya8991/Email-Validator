@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Email Validator - Complete Guide</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f8fafc; --surface: #fff; --border: #e2e8f0; --text: #1e293b;
+    --muted: #64748b; --accent: #4f46e5; --accent-light: #eef2ff;
+    --green: #16a34a; --green-bg: #f0fdf4; --red: #dc2626; --red-bg: #fef2f2;
+    --yellow: #d97706; --yellow-bg: #fffbeb; --code-bg: #f1f5f9;
+    --radius: 10px; --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  .layout { display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  nav { width: 240px; background: var(--surface); border-right: 1px solid var(--border); padding: 1.5rem 1rem; position: sticky; top: 0; height: 100vh; overflow-y: auto; flex-shrink: 0; }
+  .nav-brand { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  .nav-brand .icon { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 14px; }
+  .nav-brand span { font-weight: 700; font-size: .95rem; }
+  nav h3 { font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 1rem 0 .4rem .5rem; }
+  nav a { display: block; padding: .4rem .6rem; border-radius: 6px; font-size: .82rem; color: var(--muted); text-decoration: none; transition: background .15s, color .15s; }
+  nav a:hover { background: var(--accent-light); color: var(--accent); }
+
+  /* Main */
+  main { flex: 1; max-width: 860px; padding: 2.5rem 2rem; }
+  .hero { margin-bottom: 2.5rem; }
+  .hero h1 { font-size: 1.8rem; font-weight: 800; color: var(--text); }
+  .hero p { color: var(--muted); margin-top: .4rem; font-size: 1rem; }
+  .badge { display: inline-block; font-size: .7rem; font-weight: 700; padding: .2rem .5rem; border-radius: 4px; }
+  .badge-new { background: var(--green-bg); color: var(--green); }
+
+  /* Sections */
+  section { margin-bottom: 3rem; scroll-margin-top: 1.5rem; }
+  h2 { font-size: 1.2rem; font-weight: 700; color: var(--text); margin-bottom: 1rem; padding-bottom: .5rem; border-bottom: 2px solid var(--accent-light); display: flex; align-items: center; gap: .5rem; }
+  h2 .num { width: 26px; height: 26px; background: var(--accent); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: .75rem; flex-shrink: 0; }
+  h3 { font-size: .95rem; font-weight: 600; color: var(--text); margin: 1.2rem 0 .5rem; }
+  p { color: var(--muted); font-size: .88rem; margin-bottom: .6rem; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.2rem 1.4rem; margin-bottom: 1rem; box-shadow: var(--shadow); }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .8rem; margin-bottom: 1rem; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; text-align: center; }
+  .stat-card .val { font-size: 1.6rem; font-weight: 800; }
+  .stat-card .lbl { font-size: .75rem; color: var(--muted); margin-top: .15rem; }
+
+  /* Callouts */
+  .callout { border-radius: var(--radius); padding: .8rem 1rem; margin: .8rem 0; font-size: .84rem; display: flex; gap: .7rem; }
+  .callout-icon { flex-shrink: 0; font-size: 1rem; line-height: 1.5; }
+  .callout p { margin: 0; }
+  .info { background: var(--accent-light); border: 1px solid #c7d2fe; color: #3730a3; }
+  .warn { background: var(--yellow-bg); border: 1px solid #fde68a; color: #92400e; }
+  .danger { background: var(--red-bg); border: 1px solid #fecaca; color: #991b1b; }
+  .success { background: var(--green-bg); border: 1px solid #bbf7d0; color: #14532d; }
+
+  /* Code */
+  code { background: var(--code-bg); padding: .15em .4em; border-radius: 4px; font-size: .82em; font-family: ui-monospace, monospace; color: #c026d3; }
+  pre { background: #1e293b; color: #e2e8f0; border-radius: var(--radius); padding: 1rem 1.2rem; overflow-x: auto; font-size: .8rem; line-height: 1.65; margin: .6rem 0 1rem; }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  .cmd { background: #0f172a; color: #86efac; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; margin: .6rem 0 1rem; }
+  th { background: var(--code-bg); text-align: left; padding: .55rem .8rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: .55rem .8rem; border-bottom: 1px solid var(--border); color: var(--muted); vertical-align: top; }
+  td:first-child { font-family: ui-monospace, monospace; font-size: .78rem; color: var(--text); font-weight: 500; }
+  tr:last-child td { border-bottom: none; }
+
+  /* Steps */
+  .steps { counter-reset: step; }
+  .step { display: flex; gap: 1rem; margin-bottom: 1.2rem; }
+  .step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: .78rem; font-weight: 700; flex-shrink: 0; margin-top: .1rem; }
+  .step-body h4 { font-size: .88rem; font-weight: 600; margin-bottom: .3rem; color: var(--text); }
+  .step-body p { margin: 0; }
+
+  /* Verdict badges */
+  .v-valid   { display: inline-block; background: #dcfce7; color: #15803d; border-radius: 9999px; padding: .1rem .55rem; font-size: .75rem; font-weight: 700; }
+  .v-invalid { display: inline-block; background: #fee2e2; color: #b91c1c; border-radius: 9999px; padding: .1rem .55rem; font-size: .75rem; font-weight: 700; }
+  .v-risky   { display: inline-block; background: #fef9c3; color: #b45309; border-radius: 9999px; padding: .1rem .55rem; font-size: .75rem; font-weight: 700; }
+  .v-unknown { display: inline-block; background: #f3f4f6; color: #4b5563; border-radius: 9999px; padding: .1rem .55rem; font-size: .75rem; font-weight: 700; }
+
+  /* TOC active */
+  nav a.active { background: var(--accent-light); color: var(--accent); font-weight: 600; }
+  @media (max-width: 700px) { nav { display: none; } main { padding: 1.5rem 1rem; } }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- Sidebar nav -->
+<nav>
+  <div class="nav-brand">
+    <div class="icon">✉</div>
+    <span>Email Validator</span>
+  </div>
+  <h3>Getting Started</h3>
+  <a href="#overview">Overview</a>
+  <a href="#requirements">Requirements</a>
+  <a href="#local-install">Local Installation</a>
+  <h3>Configuration</h3>
+  <a href="#env-vars">Environment Variables</a>
+  <a href="#neon-setup">Neon Database Setup</a>
+  <a href="#vercel-deploy">Vercel Deployment</a>
+  <a href="#github-actions">GitHub Actions (Bulk)</a>
+  <h3>Using the App</h3>
+  <a href="#pages">Pages Overview</a>
+  <a href="#single-validate">Single Email</a>
+  <a href="#bulk-csv">Bulk CSV</a>
+  <a href="#strategies">Strategies</a>
+  <a href="#cache-settings">Cache Settings</a>
+  <h3>API Reference</h3>
+  <a href="#api-verify">POST /api/verify</a>
+  <a href="#api-bulk">POST /api/bulk</a>
+  <a href="#api-stats">GET /api/stats</a>
+  <h3>Troubleshooting</h3>
+  <a href="#troubleshoot">Common Issues</a>
+  <a href="#faq">FAQ</a>
+</nav>
+
+<!-- Main content -->
+<main>
+
+  <div class="hero">
+    <h1>✉ Email Validator — Complete Guide</h1>
+    <p>Install, configure, and use the multi-provider email validation app. Covers local dev, Neon PostgreSQL, Vercel deployment, GitHub Actions bulk processing, and full API reference.</p>
+  </div>
+
+  <!-- ───────────────────────── OVERVIEW ───────────────────────── -->
+  <section id="overview">
+    <h2><span class="num">1</span> Overview</h2>
+    <p>Email Validator is a FastAPI web app that validates single emails or bulk CSVs using multiple providers. Results are cached to save API credits on repeat checks.</p>
+
+    <div class="card-grid">
+      <div class="stat-card"><div class="val" style="color:#4f46e5">5</div><div class="lbl">Validation providers</div></div>
+      <div class="stat-card"><div class="val" style="color:#16a34a">4</div><div class="lbl">Strategies</div></div>
+      <div class="stat-card"><div class="val" style="color:#d97706">∞</div><div class="lbl">Bulk CSV rows (via GHA)</div></div>
+      <div class="stat-card"><div class="val" style="color:#dc2626">30d</div><div class="lbl">Default cache TTL</div></div>
+    </div>
+
+    <h3>Providers</h3>
+    <table>
+      <tr><th>Provider</th><th>Type</th><th>Key required</th><th>Bulk support</th></tr>
+      <tr><td>Local</td><td>Free built-in</td><td>No</td><td>Yes (unlimited)</td></tr>
+      <tr><td>Bouncify</td><td>Paid API</td><td>BOUNCIFY_API_KEY</td><td>Yes (job-based)</td></tr>
+      <tr><td>ZeroBounce</td><td>Paid API</td><td>ZEROBOUNCE_API_KEY</td><td>Yes (CSV upload)</td></tr>
+      <tr><td>NeverBounce</td><td>Paid API</td><td>NEVERBOUNCE_API_KEY</td><td>Yes (job-based)</td></tr>
+      <tr><td>Hunter.io</td><td>Paid API</td><td>HUNTER_API_KEY</td><td>Concurrent singles</td></tr>
+    </table>
+
+    <h3>Verdicts</h3>
+    <table>
+      <tr><th>Verdict</th><th>Meaning</th><th>Cached?</th></tr>
+      <tr><td><span class="v-valid">valid</span></td><td>Email exists and accepts mail</td><td>Yes</td></tr>
+      <tr><td><span class="v-invalid">invalid</span></td><td>Non-existent address or no MX record</td><td>Yes</td></tr>
+      <tr><td><span class="v-risky">risky</span></td><td>Catch-all, disposable, or role address</td><td>Yes</td></tr>
+      <tr><td><span class="v-unknown">unknown</span></td><td>API error or inconclusive result</td><td>No — retried next time</td></tr>
+    </table>
+  </section>
+
+  <!-- ───────────────────────── REQUIREMENTS ───────────────────────── -->
+  <section id="requirements">
+    <h2><span class="num">2</span> Requirements</h2>
+    <table>
+      <tr><th>Requirement</th><th>Details</th></tr>
+      <tr><td>Python</td><td>3.12+ (specified in <code>.python-version</code>)</td></tr>
+      <tr><td>pip / uv</td><td>Any modern version — uses <code>requirements.txt</code></td></tr>
+      <tr><td>Bouncify API key</td><td>Required for paid validation. Get one at bouncify.io</td></tr>
+      <tr><td>Neon account</td><td>Required for Vercel deployment (free tier). neon.tech</td></tr>
+      <tr><td>GitHub account</td><td>Required for bulk CSV processing via Actions</td></tr>
+      <tr><td>Vercel account</td><td>Required for production deployment (free Hobby plan works)</td></tr>
+    </table>
+
+    <div class="callout info">
+      <span class="callout-icon">ℹ️</span>
+      <p>For local development only, you can skip Neon — the app falls back to SQLite automatically.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── LOCAL INSTALL ───────────────────────── -->
+  <section id="local-install">
+    <h2><span class="num">3</span> Local Installation</h2>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Clone the repository</h4>
+          <pre class="cmd"><code>git clone https://github.com/Layruss98266/Email-Validator.git
+cd Email-Validator</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Install dependencies</h4>
+          <pre class="cmd"><code>pip install -r requirements.txt</code></pre>
+          <p>Or with uv: <code>uv pip install -r requirements.txt</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Create your .env file</h4>
+          <pre class="cmd"><code>cp .env.example .env</code></pre>
+          <p>Then open <code>.env</code> and fill in at minimum:</p>
+          <pre><code>BOUNCIFY_API_KEY=your_key_here</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>(Optional) Initialize a Neon database</h4>
+          <p>If you set <code>DATABASE_URL</code> in your <code>.env</code>:</p>
+          <pre class="cmd"><code>python scripts/init_db.py</code></pre>
+          <p>Skip this step to use local SQLite instead.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <h4>Start the server</h4>
+          <pre class="cmd"><code>python -m uvicorn app.main:app --reload</code></pre>
+          <p>Open <strong>http://localhost:8000</strong> in your browser.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>Install the pre-push git hook (recommended)</h3>
+    <p>Runs 26 automated checks before every push to prevent broken Vercel deployments:</p>
+    <pre class="cmd"><code>git config core.hooksPath .githooks</code></pre>
+    <p>Run manually anytime with: <code>bash scripts/pre_push_check.sh</code></p>
+  </section>
+
+  <!-- ───────────────────────── ENV VARS ───────────────────────── -->
+  <section id="env-vars">
+    <h2><span class="num">4</span> Environment Variables</h2>
+    <p>Copy <code>.env.example</code> to <code>.env</code> and fill in the values. Never commit <code>.env</code> — it is gitignored.</p>
+
+    <h3>Required for Vercel production</h3>
+    <table>
+      <tr><th>Variable</th><th>Description</th></tr>
+      <tr><td>BOUNCIFY_API_KEY</td><td>Primary validation provider key (bouncify.io)</td></tr>
+      <tr><td>DATABASE_URL</td><td>Neon PostgreSQL connection string. Starts with <code>postgres://</code></td></tr>
+      <tr><td>GITHUB_PAT</td><td>GitHub Personal Access Token with <code>Actions (write)</code> scope. Needed for bulk CSV processing.</td></tr>
+      <tr><td>GITHUB_REPO</td><td>Your repo as <code>owner/repo</code>, e.g. <code>Layruss98266/Email-Validator</code></td></tr>
+    </table>
+
+    <h3>Optional providers</h3>
+    <table>
+      <tr><th>Variable</th><th>Description</th></tr>
+      <tr><td>ZEROBOUNCE_API_KEY</td><td>Enables ZeroBounce provider</td></tr>
+      <tr><td>NEVERBOUNCE_API_KEY</td><td>Enables NeverBounce provider</td></tr>
+      <tr><td>HUNTER_API_KEY</td><td>Enables Hunter.io provider</td></tr>
+    </table>
+
+    <h3>Optional settings</h3>
+    <table>
+      <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+      <tr><td>CACHE_TTL_DAYS</td><td>30</td><td>Default cache lifetime in days. Overridden per-request by the Settings page TTL preference.</td></tr>
+      <tr><td>HTTPX_TIMEOUT</td><td>10.0</td><td>HTTP timeout in seconds. Keep at 8 or below on Vercel Hobby (10s limit).</td></tr>
+      <tr><td>MAX_BULK_EMAILS</td><td>0</td><td>Hard cap on CSV rows. 0 = unlimited. GitHub Actions handles any size.</td></tr>
+      <tr><td>BOUNCIFY_DAILY_CAP</td><td>500</td><td>Max Bouncify calls per day. 0 = unlimited. Prevents accidental credit burn.</td></tr>
+      <tr><td>ENABLE_SMTP_PROBE</td><td>false</td><td>Enable raw SMTP RCPT TO probe in local provider. Port 25 is blocked on most cloud hosts.</td></tr>
+      <tr><td>SMTP_PROBE_FROM</td><td>probe@example.com</td><td>FROM address used in SMTP probe.</td></tr>
+    </table>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p>The <code>DATABASE_URL</code> from Neon starts with <code>postgres://</code> — the app automatically converts it to <code>postgresql+psycopg2://</code> for SQLAlchemy. You do not need to modify it.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── NEON SETUP ───────────────────────── -->
+  <section id="neon-setup">
+    <h2><span class="num">5</span> Neon Database Setup</h2>
+    <p>Neon provides free serverless PostgreSQL — required for persistent data on Vercel (Vercel's filesystem is ephemeral).</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Create a free Neon account</h4>
+          <p>Go to <strong>neon.tech</strong> and sign up. Create a new project (e.g. "email-validator").</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Copy the connection string</h4>
+          <p>In your Neon project dashboard, go to <strong>Connection Details</strong>. Copy the connection string that starts with <code>postgres://</code>. It looks like:</p>
+          <pre><code>postgres://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Add to your .env</h4>
+          <pre><code>DATABASE_URL=postgres://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require</code></pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Initialize the tables (run once)</h4>
+          <pre class="cmd"><code>python scripts/init_db.py</code></pre>
+          <p>Output should list 4 tables: <code>job</code>, <code>emailresult</code>, <code>emailcache</code>, <code>apiusage</code>.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout success">
+      <span class="callout-icon">✅</span>
+      <p>The same <code>DATABASE_URL</code> goes into Vercel environment variables AND GitHub repository secrets. All three (local, Vercel, GitHub Actions) share one database.</p>
+    </div>
+
+    <h3>Migrating an existing database</h3>
+    <p>If you already have a Neon DB from a previous version, run this migration once to add the <code>csv_data</code> column:</p>
+    <pre><code>ALTER TABLE job ADD COLUMN csv_data TEXT NOT NULL DEFAULT '';</code></pre>
+    <p>Run it in the Neon SQL editor (project dashboard → SQL Editor).</p>
+  </section>
+
+  <!-- ───────────────────────── VERCEL DEPLOY ───────────────────────── -->
+  <section id="vercel-deploy">
+    <h2><span class="num">6</span> Vercel Deployment</h2>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Install Vercel CLI and deploy</h4>
+          <pre class="cmd"><code>npm i -g vercel
+vercel --prod</code></pre>
+          <p>When prompted for Application Preset, select <strong>Other</strong>.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Add environment variables in Vercel dashboard</h4>
+          <p>Go to your project → Settings → Environment Variables. Add all four required variables:</p>
+          <table>
+            <tr><th>Key</th><th>Value</th></tr>
+            <tr><td>BOUNCIFY_API_KEY</td><td>your Bouncify key</td></tr>
+            <tr><td>DATABASE_URL</td><td>your Neon connection string</td></tr>
+            <tr><td>GITHUB_PAT</td><td>GitHub PAT with Actions scope</td></tr>
+            <tr><td>GITHUB_REPO</td><td>YourUsername/Email-Validator</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Redeploy to pick up the env vars</h4>
+          <p>Go to Deployments → click the latest deployment → Redeploy. Or push a commit to trigger auto-deploy.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Vercel Hobby has a 10-second function timeout.</strong> Single email validation works fine. Bulk CSV jobs are offloaded to GitHub Actions — set <code>GITHUB_PAT</code> and <code>GITHUB_REPO</code> to enable this.</p>
+    </div>
+
+    <h3>Key Vercel requirements (already configured)</h3>
+    <table>
+      <tr><th>File</th><th>Requirement</th></tr>
+      <tr><td>.python-version</td><td>Must exist with content <code>3.12</code></td></tr>
+      <tr><td>vercel.json</td><td>Must NOT have <code>"runtime"</code> key; <code>maxDuration</code> must be ≤ 10 on Hobby</td></tr>
+      <tr><td>pyproject.toml</td><td>Must NOT exist — Vercel runs <code>uv lock</code> on any pyproject.toml and fails</td></tr>
+      <tr><td>api/index.py</td><td>Entry point with <code>handler = Mangum(app)</code></td></tr>
+      <tr><td>requirements.txt</td><td>All dependencies listed; no C-extension packages that don't have wheels</td></tr>
+    </table>
+  </section>
+
+  <!-- ───────────────────────── GITHUB ACTIONS ───────────────────────── -->
+  <section id="github-actions">
+    <h2><span class="num">7</span> GitHub Actions (Bulk Processing)</h2>
+    <p>Vercel's 10s timeout makes large bulk CSV jobs impossible. GitHub Actions runs the processing with no timeout limit (up to 6 hours).</p>
+
+    <h3>How it works</h3>
+    <div class="card">
+      <ol style="padding-left:1.2rem;font-size:.84rem;color:var(--muted);line-height:2">
+        <li>User uploads CSV on Vercel → job row created in Neon DB, CSV stored in <code>job.csv_data</code></li>
+        <li>Vercel calls GitHub Actions <code>workflow_dispatch</code> API with the <code>job_id</code></li>
+        <li>GitHub Actions runner installs deps and runs <code>python scripts/process_job.py --job-id N</code></li>
+        <li>Script reads CSV from Neon, validates in chunks of 20, writes results back to Neon</li>
+        <li>Frontend polls <code>/api/bulk/{id}</code> every few seconds and shows live progress</li>
+        <li>User downloads results from <code>/api/bulk/{id}/download</code></li>
+      </ol>
+    </div>
+
+    <h3>Setup steps</h3>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Create a GitHub Personal Access Token</h4>
+          <p>Go to GitHub → Settings → Developer Settings → Personal Access Tokens → Tokens (classic).<br>
+          Create a token with <strong>workflow</strong> scope checked. Copy it.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Add the PAT to Vercel env vars</h4>
+          <p><code>GITHUB_PAT</code> = the token you just created<br>
+          <code>GITHUB_REPO</code> = <code>YourUsername/Email-Validator</code></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Add secrets to your GitHub repo</h4>
+          <p>Go to your repo → Settings → Secrets and variables → Actions → New repository secret:</p>
+          <table>
+            <tr><th>Secret name</th><th>Value</th></tr>
+            <tr><td>DATABASE_URL</td><td>Your Neon connection string</td></tr>
+            <tr><td>BOUNCIFY_API_KEY</td><td>Your Bouncify key</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="callout-icon">ℹ️</span>
+      <p>If <code>GITHUB_PAT</code> is not set, bulk jobs fall back to Vercel's BackgroundTasks. This works locally and on Render/Railway but will hit the 10s limit on Vercel Hobby for large files.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── PAGES OVERVIEW ───────────────────────── -->
+  <section id="pages">
+    <h2><span class="num">8</span> Pages Overview</h2>
+    <table>
+      <tr><th>Page</th><th>URL</th><th>What it does</th></tr>
+      <tr><td>Dashboard</td><td>/</td><td>Stats overview, quick single-email validate, recent bulk jobs</td></tr>
+      <tr><td>Validate</td><td>/validate</td><td>Single email or bulk CSV upload with strategy/provider selection</td></tr>
+      <tr><td>Cache Browser</td><td>/cache</td><td>Search cached results, delete entries, purge all expired</td></tr>
+      <tr><td>Analytics</td><td>/analytics</td><td>Charts: verdict distribution, 14-day trend, top invalid domains</td></tr>
+      <tr><td>History</td><td>/jobs</td><td>All bulk jobs with status, progress bars, and download links</td></tr>
+      <tr><td>Settings</td><td>/settings</td><td>Provider key status, global cache TTL, domain reputation lookup</td></tr>
+      <tr><td>API Docs</td><td>/docs</td><td>Interactive Swagger UI with all endpoints</td></tr>
+    </table>
+  </section>
+
+  <!-- ───────────────────────── SINGLE VALIDATE ───────────────────────── -->
+  <section id="single-validate">
+    <h2><span class="num">9</span> Single Email Validation</h2>
+
+    <h3>Using the UI</h3>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Go to /validate</h4>
+          <p>The Single Email tab is open by default.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Pick a strategy</h4>
+          <p>Click one of the strategy cards (Bouncify Only, Local First, Consensus, Waterfall). See the Strategies section for guidance.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Enter the email and click Verify</h4>
+          <p>Results appear inline. Second check of the same email is instant (served from cache).</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>Using the API</h3>
+    <pre><code>POST /api/verify
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "providers": ["bouncify", "local"],
+  "strategy": "local_first",
+  "cache_ttl_days": 7
+}</code></pre>
+
+    <p><code>cache_ttl_days</code>: <code>null</code> = use global default, <code>0</code> = skip caching, <code>N</code> = cache for N days.</p>
+
+    <pre><code>{
+  "email": "user@example.com",
+  "verdict": "valid",
+  "confidence": 88,
+  "cached": false,
+  "providers": {
+    "local": { "status": "valid", "is_disposable": false, "mx_found": true },
+    "bouncify": { "status": "valid", "sub_status": "deliverable" }
+  },
+  "elapsed_ms": 312.4
+}</code></pre>
+  </section>
+
+  <!-- ───────────────────────── BULK CSV ───────────────────────── -->
+  <section id="bulk-csv">
+    <h2><span class="num">10</span> Bulk CSV Processing</h2>
+
+    <h3>CSV format</h3>
+    <p>Any CSV with an <code>email</code> column. Column name is auto-detected. Extra columns are preserved in the output.</p>
+    <pre><code>email,name,source
+alice@example.com,Alice,signup
+bob@mailinator.com,Bob,import
+invalid-email,Charlie,manual</code></pre>
+
+    <h3>Upload via UI</h3>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Go to /validate, click "Bulk CSV" tab</h4>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Drop your CSV file or click to browse</h4>
+          <p>File row count is shown after selection.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Click "Start Bulk Validation"</h4>
+          <p>You'll get a job ID and a link to track progress.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Track progress at /jobs/{id}</h4>
+          <p>Page polls automatically every few seconds. Download the CSV when done.</p>
+        </div>
+      </div>
+    </div>
+
+    <h3>Download with verdict filter</h3>
+    <table>
+      <tr><th>URL</th><th>Returns</th></tr>
+      <tr><td>/api/bulk/{id}/download</td><td>All results</td></tr>
+      <tr><td>/api/bulk/{id}/download?verdict=valid</td><td>Only valid emails</td></tr>
+      <tr><td>/api/bulk/{id}/download?verdict=invalid</td><td>Only invalid emails</td></tr>
+      <tr><td>/api/bulk/{id}/download?verdict=risky</td><td>Only risky emails</td></tr>
+    </table>
+
+    <h3>Output columns added</h3>
+    <table>
+      <tr><th>Column</th><th>Description</th></tr>
+      <tr><td>verdict</td><td>Final verdict: valid / invalid / risky / unknown</td></tr>
+      <tr><td>{provider}_status</td><td>Per-provider result, one column per enabled provider</td></tr>
+      <tr><td>from_cache</td><td>true if result was served from cache (no API call made)</td></tr>
+    </table>
+  </section>
+
+  <!-- ───────────────────────── STRATEGIES ───────────────────────── -->
+  <section id="strategies">
+    <h2><span class="num">11</span> Strategies</h2>
+    <table>
+      <tr><th>Strategy</th><th>Cost</th><th>How it works</th><th>Best for</th></tr>
+      <tr><td>bouncify_only</td><td>$</td><td>Calls Bouncify only. 1 credit per email.</td><td>Quick checks on reasonably clean lists</td></tr>
+      <tr><td>local_first</td><td>¢</td><td>Runs free local checks first (syntax, MX, disposable). Only calls paid API if local doesn't clearly mark it invalid.</td><td>Dirty lists with lots of obvious invalids — saves 30-50% credits</td></tr>
+      <tr><td>consensus</td><td>$$$</td><td>Calls all enabled providers in parallel. Takes majority vote on verdict.</td><td>High-value lists where accuracy matters more than cost</td></tr>
+      <tr><td>waterfall</td><td>$$</td><td>Tries local → Hunter → Bouncify → ZeroBounce in order. Stops at first confident result.</td><td>Balancing accuracy and cost on medium lists</td></tr>
+    </table>
+
+    <div class="callout info">
+      <span class="callout-icon">💡</span>
+      <p><strong>Tip:</strong> Use <code>local_first</code> for bulk jobs with large lists. It typically eliminates 20-40% of emails before touching paid APIs, especially for lists with role addresses (<code>info@</code>, <code>admin@</code>) and disposable domains.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── CACHE SETTINGS ───────────────────────── -->
+  <section id="cache-settings">
+    <h2><span class="num">12</span> Cache Settings</h2>
+    <p>Caching stores validation results so repeat checks don't consume API credits. Cache duration is set globally in <strong>Settings → Cache Duration</strong>.</p>
+
+    <table>
+      <tr><th>TTL option</th><th>When to use</th></tr>
+      <tr><td>1 day</td><td>Lists that change frequently; high accuracy requirement</td></tr>
+      <tr><td>7 days</td><td>Weekly email campaigns</td></tr>
+      <tr><td>30 days (default)</td><td>Good balance — monthly newsletter lists</td></tr>
+      <tr><td>90 days</td><td>Stable lists that rarely change</td></tr>
+      <tr><td>1 year</td><td>Archive / one-time validation only</td></tr>
+      <tr><td>No cache</td><td>Always re-validate fresh; never store result</td></tr>
+    </table>
+
+    <p>The TTL preference is stored in your browser (localStorage) and applied to all validations you run. The server default (<code>CACHE_TTL_DAYS</code> env var) is used as a fallback when no preference is set.</p>
+
+    <h3>Managing cached entries</h3>
+    <ul style="font-size:.84rem;color:var(--muted);padding-left:1.2rem;line-height:1.9">
+      <li>Browse and search cached results at <a href="/cache" style="color:var(--accent)">/cache</a></li>
+      <li>Delete a single entry: click the delete button in the Cache Browser</li>
+      <li>Purge all expired entries: Settings → Cache Duration → Purge Expired</li>
+      <li>API: <code>POST /api/cache/purge</code> or <code>DELETE /api/cache/{id}</code></li>
+    </ul>
+  </section>
+
+  <!-- ───────────────────────── API REFERENCE ───────────────────────── -->
+  <section id="api-verify">
+    <h2><span class="num">13</span> API Reference</h2>
+    <p>Full interactive documentation at <a href="/docs" style="color:var(--accent)">/docs</a> (Swagger UI).</p>
+
+    <h3>POST /api/verify — Single email</h3>
+    <pre><code>POST /api/verify
+Content-Type: application/json
+
+{
+  "email": "string",
+  "providers": ["bouncify", "local"],   // optional, defaults to all enabled
+  "strategy": "bouncify_only",          // optional
+  "cache_ttl_days": 30                  // optional: null=default, 0=no cache
+}</code></pre>
+
+    <h3>POST /api/bulk — Upload CSV</h3>
+    <pre><code>POST /api/bulk
+Content-Type: multipart/form-data
+
+file          = CSV file
+providers     = bouncify,local          (comma-separated)
+strategy      = local_first
+email_column  = email                   (optional, auto-detected)
+cache_ttl_days = 30                     (optional)</code></pre>
+
+    <p>Returns: <code>{"job_id": 42, "total": 150, "status": "queued"}</code></p>
+
+    <h3>GET /api/bulk/{id} — Job status</h3>
+    <pre><code>{"job_id": 42, "status": "running", "processed": 80, "total": 150, "progress_pct": 53}</code></pre>
+
+    <h3>GET /api/bulk/{id}/download — Download results</h3>
+    <pre><code>GET /api/bulk/42/download?verdict=valid</code></pre>
+    <p>Returns CSV file. <code>verdict</code> filter: <code>all</code> | <code>valid</code> | <code>invalid</code> | <code>risky</code>.</p>
+
+    <h3>GET /api/stats — Analytics data</h3>
+    <pre><code>{"total_validated": 1200, "total_cached": 340, "cache_hit_rate": 28.3,
+ "verdict_counts": {"valid": 890, "invalid": 200, "risky": 110},
+ "daily_stats": [...], "top_invalid_domains": [...]}</code></pre>
+
+    <h3>GET /api/domain/{domain} — Domain reputation</h3>
+    <pre><code>GET /api/domain/mailinator.com
+
+{"domain": "mailinator.com", "total_checked": 45, "reputation": "bad",
+ "verdict_counts": {"invalid": 40, "risky": 5}}</code></pre>
+
+    <h3>Cache management</h3>
+    <pre><code>POST /api/cache/purge          // delete all expired entries
+DELETE /api/cache/{id}         // delete one entry by ID</code></pre>
+  </section>
+
+  <!-- ───────────────────────── TROUBLESHOOTING ───────────────────────── -->
+  <section id="troubleshoot">
+    <h2><span class="num">14</span> Troubleshooting</h2>
+
+    <h3>Internal Server Error on /analytics</h3>
+    <div class="callout danger">
+      <span class="callout-icon">🔴</span>
+      <p><strong>Cause:</strong> SQLite-specific SQL was being used on PostgreSQL.<br>
+      <strong>Fix:</strong> Already resolved in current codebase — <code>app/routes/ui.py</code> and <code>app/routes/api_stats.py</code> now detect the database dialect automatically.</p>
+    </div>
+
+    <h3>Vercel build fails: "No 'project' table found in pyproject.toml"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> Vercel runs <code>uv lock</code> on any <code>pyproject.toml</code>, even empty ones.<br>
+      <strong>Fix:</strong> <code>pyproject.toml</code> must not exist. Config is split into <code>ruff.toml</code>, <code>pytest.ini</code>, <code>mypy.ini</code>.</p>
+    </div>
+
+    <h3>Vercel build fails: "Function Runtimes must have a valid version"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> <code>vercel.json</code> has a <code>"runtime": "python3.12"</code> key.<br>
+      <strong>Fix:</strong> Remove the <code>runtime</code> key entirely. Vercel detects Python from <code>.python-version</code>.</p>
+    </div>
+
+    <h3>Vercel build fails: "Function must contain at least one property"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> <code>vercel.json</code> has <code>"api/index.py": {}</code> (empty object).<br>
+      <strong>Fix:</strong> Add at least <code>"maxDuration": 10</code> inside the function config.</p>
+    </div>
+
+    <h3>Vercel build fails: "maxDuration exceeds maximum"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> Hobby plan limit is 10 seconds. <code>maxDuration: 60</code> requires Pro.<br>
+      <strong>Fix:</strong> Set <code>"maxDuration": 10</code> in <code>vercel.json</code>. Use GitHub Actions for bulk jobs.</p>
+    </div>
+
+    <h3>Templates not found: "TemplateNotFound"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> Relative path <code>"app/templates"</code> in Jinja2Templates constructor.<br>
+      <strong>Fix:</strong> Use absolute path: <code>str(Path(__file__).parent.parent / "templates")</code></p>
+    </div>
+
+    <h3>Bulk jobs never start / stay at "queued"</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> <code>GITHUB_PAT</code> or <code>GITHUB_REPO</code> not set, or PAT missing <code>workflow</code> scope.<br>
+      <strong>Fix:</strong> Set both env vars in Vercel. PAT must have "Actions (write)" scope. Check <code>/api/health</code> to confirm.</p>
+    </div>
+
+    <h3>Database connection fails on Vercel</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause 1:</strong> <code>DATABASE_URL</code> not set in Vercel env vars — app falls back to ephemeral SQLite.<br>
+      <strong>Cause 2:</strong> Tables don't exist yet — run <code>python scripts/init_db.py</code> locally first.<br>
+      <strong>Cause 3:</strong> URL missing <code>?sslmode=require</code> — Neon requires SSL. The app adds SSL automatically.</p>
+    </div>
+
+    <h3>psycopg2 import error</h3>
+    <div class="callout warn">
+      <span class="callout-icon">⚠️</span>
+      <p><strong>Cause:</strong> <code>psycopg2-binary</code> not in <code>requirements.txt</code>.<br>
+      <strong>Fix:</strong> Ensure <code>psycopg2-binary>=2.9.9</code> is listed. Do not use <code>psycopg2</code> (non-binary) — it requires C compilation.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── FAQ ───────────────────────── -->
+  <section id="faq">
+    <h2><span class="num">15</span> FAQ</h2>
+
+    <h3>Can I use this without Bouncify?</h3>
+    <p>Yes — select "Local" as the only provider. The local stack (syntax, MX, disposable check) is always free and requires no API key. Results are less accurate for edge cases but good enough for basic cleaning.</p>
+
+    <h3>How many emails can I validate in bulk?</h3>
+    <p>Unlimited — GitHub Actions handles the processing with no timeout. The 10s Vercel limit only applies to the initial upload request, not the validation itself. For very large lists (50k+), the GitHub Actions job may take 30-60 minutes depending on the providers used.</p>
+
+    <h3>Will re-validating a cached email use API credits?</h3>
+    <p>No. Cached results are returned immediately without calling any provider. The cache duration is set in Settings (default 30 days). Use "No cache" TTL to force a fresh check.</p>
+
+    <h3>What does "risky" mean exactly?</h3>
+    <p>Risky means the email address technically exists and can receive mail, but it is likely to harm your sending reputation. Examples: catch-all domains (accept all addresses whether they exist or not), disposable/temporary email services (mailinator.com, guerrillamail.com), and role addresses (info@, admin@, noreply@).</p>
+
+    <h3>Is the local provider accurate enough for production?</h3>
+    <p>For syntax and obvious invalids, yes. For deliverability (will the email actually bounce?), no — you need a paid provider. Use <code>local_first</code> strategy to run local checks first and only call paid APIs for uncertain results.</p>
+
+    <h3>Can I self-host instead of Vercel?</h3>
+    <p>Yes. The app runs as a standard FastAPI app. Any platform that runs Python works: Railway, Render, Fly.io, a VPS. Remove the <code>api/index.py</code> Mangum entry point and run <code>uvicorn app.main:app</code> directly. For bulk jobs, you can use FastAPI BackgroundTasks instead of GitHub Actions (no timeout limit on non-serverless hosts).</p>
+
+    <h3>How do I reset/clear all data?</h3>
+    <p>To clear just cache: Settings → Purge Expired, or <code>POST /api/cache/purge</code>.<br>
+    To clear everything: drop and recreate the tables in Neon's SQL editor, then re-run <code>python scripts/init_db.py</code>.</p>
+  </section>
+
+</main>
+</div>
+
+<script>
+// Highlight active nav link on scroll
+const sections = document.querySelectorAll('section[id]');
+const links = document.querySelectorAll('nav a');
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const link = document.querySelector(`nav a[href="#${e.target.id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, {rootMargin: '-20% 0px -70% 0px'});
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Job #{{ job.id }} — Email Validator{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Job #{{ job.id }} - Email Validator{% endblock %}
 {% block content %}
 <div class="space-y-6">
 
@@ -52,7 +52,7 @@
     <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
       <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Results Preview</h2>
       {% if job.total > 200 %}
-      <span class="text-xs text-gray-400">Showing first 200 of {{ job.total }} — download CSV for all</span>
+      <span class="text-xs text-gray-400">Showing first 200 of {{ job.total }} - download CSV for all</span>
       {% endif %}
     </div>
     <table class="w-full text-sm">

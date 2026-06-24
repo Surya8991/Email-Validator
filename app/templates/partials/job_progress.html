@@ -1,4 +1,4 @@
-<div id="progress-block"
+﻿<div id="progress-block"
   {% if job.status in ['queued','running'] %}
   hx-get="/jobs/{{ job.id }}/status" hx-trigger="every 2s" hx-swap="outerHTML"
   {% endif %}
@@ -11,7 +11,7 @@
     <div class="bg-indigo-500 h-2 rounded-full transition-all" style="width: {{ pct }}%"></div>
   </div>
   {% if job.status == 'done' %}
-  <p class="text-xs text-green-600 font-medium">✓ Complete — <a href="/api/bulk/{{ job.id }}/download" class="underline">Download CSV</a></p>
+  <p class="text-xs text-green-600 font-medium">✓ Complete - <a href="/api/bulk/{{ job.id }}/download" class="underline">Download CSV</a></p>
   {% elif job.status == 'failed' %}
   <p class="text-xs text-red-600">✗ Failed: {{ job.error or 'unknown error' }}</p>
   {% endif %}

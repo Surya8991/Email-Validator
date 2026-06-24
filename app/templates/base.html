@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" id="html-root" class="">
 <head>
   <meta charset="UTF-8"/>
@@ -179,7 +179,7 @@
             <div class="flex gap-2">
               <span class="text-base leading-none mt-0.5">✅</span>
               <div><a href="/validate" class="font-medium text-indigo-500 hover:underline">Validate</a>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Single email or bulk CSV — pick strategy and providers</p></div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Single email or bulk CSV - pick strategy and providers</p></div>
             </div>
             <div class="flex gap-2">
               <span class="text-base leading-none mt-0.5">⚡</span>
@@ -194,7 +194,7 @@
             <div class="flex gap-2">
               <span class="text-base leading-none mt-0.5">📋</span>
               <div><a href="/jobs" class="font-medium text-indigo-500 hover:underline">History</a>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">All bulk jobs — status, progress, download CSV</p></div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">All bulk jobs - status, progress, download CSV</p></div>
             </div>
             <div class="flex gap-2">
               <span class="text-base leading-none mt-0.5">⚙</span>
@@ -210,7 +210,7 @@
             <div class="flex items-center gap-2"><span class="badge-valid">valid</span><span class="text-xs text-gray-500 dark:text-gray-400">Email exists and can receive mail</span></div>
             <div class="flex items-center gap-2"><span class="badge-invalid">invalid</span><span class="text-xs text-gray-500 dark:text-gray-400">Email doesn't exist or domain has no MX</span></div>
             <div class="flex items-center gap-2"><span class="badge-risky">risky</span><span class="text-xs text-gray-500 dark:text-gray-400">Catch-all, disposable, or role address</span></div>
-            <div class="flex items-center gap-2"><span class="badge-unknown">unknown</span><span class="text-xs text-gray-500 dark:text-gray-400">API error or inconclusive — not cached</span></div>
+            <div class="flex items-center gap-2"><span class="badge-unknown">unknown</span><span class="text-xs text-gray-500 dark:text-gray-400">API error or inconclusive - not cached</span></div>
           </div>
         </div>
       </div>
@@ -239,7 +239,7 @@
               <span class="font-semibold text-gray-900 dark:text-white">🗳 Consensus</span>
               <span class="text-xs font-mono bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-0.5 rounded">$$$</span>
             </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400">Calls all enabled providers in parallel and takes a majority vote. Most accurate — good for high-value lists where false positives/negatives are costly.</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Calls all enabled providers in parallel and takes a majority vote. Most accurate - good for high-value lists where false positives/negatives are costly.</p>
           </div>
           <div class="card p-3.5">
             <div class="flex items-center justify-between mb-1.5">
@@ -251,7 +251,7 @@
         </div>
 
         <div class="border-t border-gray-100 dark:border-gray-800 pt-3">
-          <p class="text-xs text-gray-400">Results are cached for 30 days — re-validating a cached email costs zero credits regardless of strategy.</p>
+          <p class="text-xs text-gray-400">Results are cached for 30 days - re-validating a cached email costs zero credits regardless of strategy.</p>
         </div>
       </div>
 
@@ -294,7 +294,7 @@
               <span class="font-semibold text-gray-900 dark:text-white">Hunter.io</span>
               <span class="text-xs text-gray-400 font-mono">HUNTER_API_KEY</span>
             </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400">Single only (no bulk endpoint — uses concurrent individual calls). Includes webmail and disposable detection.</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Single only (no bulk endpoint - uses concurrent individual calls). Includes webmail and disposable detection.</p>
           </div>
         </div>
 
@@ -320,7 +320,7 @@
           <h3 class="font-bold text-gray-900 dark:text-white">Tips</h3>
           <ul class="text-xs text-gray-500 dark:text-gray-400 space-y-1.5 list-disc list-inside">
             <li>UTF-8 encoding recommended (BOM-safe)</li>
-            <li>Duplicate emails are only validated once — cache handles the rest</li>
+            <li>Duplicate emails are only validated once - cache handles the rest</li>
             <li>On Vercel Hobby, keep CSV under 50 emails (10s function limit)</li>
             <li>On Vercel Pro or Railway/Render, large CSVs work fine (60s+)</li>
             <li>Progress updates every 20 emails (chunk size)</li>
@@ -330,16 +330,16 @@
         <div class="space-y-2">
           <h3 class="font-bold text-gray-900 dark:text-white">Output CSV columns</h3>
           <div class="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">verdict</code> — final verdict (valid/invalid/risky/unknown)</div>
-            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">{provider}_status</code> — per-provider result</div>
-            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">from_cache</code> — true if served from 30-day cache</div>
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">verdict</code> - final verdict (valid/invalid/risky/unknown)</div>
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">{provider}_status</code> - per-provider result</div>
+            <div><code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">from_cache</code> - true if served from 30-day cache</div>
             <div>All original columns are preserved</div>
           </div>
         </div>
 
         <div class="space-y-2">
           <h3 class="font-bold text-gray-900 dark:text-white">Smart export</h3>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Filter your download by verdict — perfect for sending only valid emails to your ESP:</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Filter your download by verdict - perfect for sending only valid emails to your ESP:</p>
           <div class="flex flex-wrap gap-2">
             <a href="#" class="text-xs bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 px-2 py-1 rounded font-mono hover:bg-indigo-50 dark:hover:bg-indigo-900/30">?verdict=all</a>
             <a href="#" class="text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-1 rounded font-mono">?verdict=valid</a>

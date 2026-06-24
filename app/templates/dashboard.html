@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Dashboard — Email Validator{% endblock %}
+﻿{% extends "base.html" %}
+{% block title %}Dashboard - Email Validator{% endblock %}
 {% block content %}
 <div class="space-y-7">
 
@@ -102,7 +102,7 @@
         {% for job in recent_jobs %}
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
           <td class="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">#{{ job.id }}</td>
-          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-32 truncate">{{ job.filename or '—' }}</td>
+          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-32 truncate">{{ job.filename or '-' }}</td>
           <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ job.processed }}/{{ job.total }}</td>
           <td class="px-4 py-3">
             {% if job.status == 'done' %}<span class="badge-valid">done</span>

@@ -1,4 +1,4 @@
-{% set verdict = result.verdict %}
+﻿{% set verdict = result.verdict %}
 {% set conf = result.confidence | default(0) %}
 {% set conf_color = 'bg-green-500' if conf >= 75 else ('bg-yellow-400' if conf >= 50 else 'bg-red-400') %}
 
@@ -13,7 +13,7 @@
     <div class="flex items-center gap-2 flex-wrap min-w-0">
       <span class="font-mono text-sm text-gray-700 dark:text-gray-300 truncate">{{ result.email }}</span>
       {% if result.cached %}
-      <span title="Cached — expires {{ result.expires_at.strftime('%Y-%m-%d') if result.expires_at }}"
+      <span title="Cached - expires {{ result.expires_at.strftime('%Y-%m-%d') if result.expires_at }}"
         class="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs px-2 py-0.5 rounded-full font-semibold border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 shrink-0">
         ⚡ cached
       </span>

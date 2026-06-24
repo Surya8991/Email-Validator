@@ -10,7 +10,7 @@ from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.db import engine
+from app.db import engine, is_postgres
 from app.models import EmailCache, EmailResult, Job
 from app.providers.registry import get_enabled_providers
 
@@ -28,7 +28,7 @@ _STRATEGIES = [
     {
         "value": "local_first",
         "name": "Local First",
-        "desc": "Free local check first — skip paid API on clear invalids.",
+        "desc": "Free local check first. Skip paid API on clear invalids.",
         "cost": "¢",
         "icon": "🏠",
     },
@@ -129,24 +129,39 @@ async def analytics_page(request: Request):
         )).fetchall()
         verdict_counts = {r[0]: r[1] for r in verdict_rows}
 
-        daily_rows = session.execute(text("""
-            SELECT strftime('%Y-%m-%d', created_at) as d, verdict, COUNT(*) as cnt
-            FROM emailresult
-            WHERE created_at >= date('now', '-13 days')
-            GROUP BY d, verdict ORDER BY d
-        """)).fetchall()
+        if is_postgres():
+            daily_sql = """
+                SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS d, verdict, COUNT(*) AS cnt
+                FROM emailresult
+                WHERE created_at >= NOW() - INTERVAL '13 days'
+                GROUP BY d, verdict ORDER BY d
+            """
+            domain_sql = """
+                SELECT SPLIT_PART(email, '@', 2) AS domain, COUNT(*) AS cnt
+                FROM emailresult WHERE verdict = 'invalid'
+                GROUP BY domain ORDER BY cnt DESC LIMIT 10
+            """
+        else:
+            daily_sql = """
+                SELECT strftime('%Y-%m-%d', created_at) AS d, verdict, COUNT(*) AS cnt
+                FROM emailresult
+                WHERE created_at >= date('now', '-13 days')
+                GROUP BY d, verdict ORDER BY d
+            """
+            domain_sql = """
+                SELECT substr(email, instr(email, '@') + 1) AS domain, COUNT(*) AS cnt
+                FROM emailresult WHERE verdict = 'invalid'
+                GROUP BY domain ORDER BY cnt DESC LIMIT 10
+            """
 
+        daily_rows = session.execute(text(daily_sql)).fetchall()
         daily: dict[str, dict[str, int]] = defaultdict(
             lambda: {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
         )
         for date_str, verdict, cnt in daily_rows:
             daily[date_str][verdict] = cnt
 
-        domain_rows = session.execute(text("""
-            SELECT substr(email, instr(email, '@') + 1) as domain, COUNT(*) as cnt
-            FROM emailresult WHERE verdict = 'invalid'
-            GROUP BY domain ORDER BY cnt DESC LIMIT 10
-        """)).fetchall()
+        domain_rows = session.execute(text(domain_sql)).fetchall()
 
     chart_data = {
         "verdict_counts": verdict_counts,

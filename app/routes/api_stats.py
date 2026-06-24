@@ -5,10 +5,40 @@ from sqlalchemy import func, text
 from sqlmodel import Session, select
 
 from app.core.cache import purge_expired
-from app.db import engine
+from app.db import engine, is_postgres
 from app.models import EmailCache, EmailResult
 
 router = APIRouter()
+
+# Dialect-aware SQL fragments
+def _daily_sql() -> str:
+    if is_postgres():
+        return """
+            SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS d, verdict, COUNT(*) AS cnt
+            FROM emailresult
+            WHERE created_at >= NOW() - INTERVAL '13 days'
+            GROUP BY d, verdict ORDER BY d
+        """
+    return """
+        SELECT strftime('%Y-%m-%d', created_at) AS d, verdict, COUNT(*) AS cnt
+        FROM emailresult
+        WHERE created_at >= date('now', '-13 days')
+        GROUP BY d, verdict ORDER BY d
+    """
+
+
+def _domain_sql() -> str:
+    if is_postgres():
+        return """
+            SELECT SPLIT_PART(email, '@', 2) AS domain, COUNT(*) AS cnt
+            FROM emailresult WHERE verdict = 'invalid'
+            GROUP BY domain ORDER BY cnt DESC LIMIT 10
+        """
+    return """
+        SELECT substr(email, instr(email, '@') + 1) AS domain, COUNT(*) AS cnt
+        FROM emailresult WHERE verdict = 'invalid'
+        GROUP BY domain ORDER BY cnt DESC LIMIT 10
+    """
 
 
 @router.get("/api/stats")
@@ -22,24 +52,14 @@ def get_stats():
         )).fetchall()
         verdict_counts = {r[0]: r[1] for r in verdict_rows}
 
-        daily_rows = session.execute(text("""
-            SELECT strftime('%Y-%m-%d', created_at) as d, verdict, COUNT(*) as cnt
-            FROM emailresult
-            WHERE created_at >= date('now', '-13 days')
-            GROUP BY d, verdict ORDER BY d
-        """)).fetchall()
-
+        daily_rows = session.execute(text(_daily_sql())).fetchall()
         daily: dict[str, dict[str, int]] = defaultdict(
             lambda: {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
         )
         for date_str, verdict, cnt in daily_rows:
             daily[date_str][verdict] = cnt
 
-        domain_rows = session.execute(text("""
-            SELECT substr(email, instr(email, '@') + 1) as domain, COUNT(*) as cnt
-            FROM emailresult WHERE verdict = 'invalid'
-            GROUP BY domain ORDER BY cnt DESC LIMIT 10
-        """)).fetchall()
+        domain_rows = session.execute(text(_domain_sql())).fetchall()
 
     cache_rate = round(total_cache / total_results * 100, 1) if total_results > 0 else 0
     return {
@@ -73,7 +93,7 @@ def delete_cache_entry(cache_id: int):
 def get_domain_reputation(domain: str):
     with Session(engine) as session:
         rows = session.execute(text("""
-            SELECT verdict, COUNT(*) as cnt FROM emailcache
+            SELECT verdict, COUNT(*) AS cnt FROM emailcache
             WHERE email LIKE :pattern GROUP BY verdict
         """), {"pattern": f"%@{domain.lower()}"}).fetchall()
 
