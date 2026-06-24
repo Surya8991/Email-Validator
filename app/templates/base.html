@@ -67,6 +67,12 @@
           {% if active == 'settings' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white{% endif %}">
           ⚙ Settings
         </a>
+        {% if current_user and current_user.role == 'admin' %}
+        <a href="/admin" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-indigo-200 dark:border-indigo-800
+          {% if active == 'admin' %}bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400{% else %}text-indigo-500 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950{% endif %}">
+          🛡 Admin
+        </a>
+        {% endif %}
       </nav>
 
       <!-- Right side actions -->
@@ -93,6 +99,31 @@
                  w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
           🌙
         </button>
+
+        <!-- Avatar dropdown -->
+        {% if current_user %}
+        <div class="relative" id="avatar-menu-wrap">
+          <button onclick="toggleAvatarMenu()" title="{{ current_user.email }}"
+            class="w-8 h-8 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center uppercase hover:bg-indigo-700 transition select-none">
+            {{ current_user.email[0] }}
+          </button>
+          <div id="avatar-dropdown"
+            class="hidden absolute right-0 top-10 w-52 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-lg z-50 py-1 text-sm">
+            <div class="px-4 py-2.5 border-b border-gray-100 dark:border-gray-800">
+              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ current_user.email }}</p>
+              {% if current_user.role == 'admin' %}
+              <span class="text-xs font-semibold text-amber-600 dark:text-amber-400">Admin</span>
+              {% endif %}
+            </div>
+            <form method="post" action="/logout" class="px-2 py-1">
+              <button type="submit"
+                class="w-full text-left px-3 py-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition text-xs font-medium">
+                → Sign out
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
 
         <!-- Mobile menu button -->
         <button onclick="toggleMobileMenu()" id="mobile-menu-btn"
@@ -477,6 +508,17 @@
     function toggleMobileMenu() {
       document.getElementById('mobile-menu').classList.toggle('hidden');
     }
+
+    /* ── Avatar dropdown ── */
+    function toggleAvatarMenu() {
+      document.getElementById('avatar-dropdown').classList.toggle('hidden');
+    }
+    document.addEventListener('click', function(e) {
+      const wrap = document.getElementById('avatar-menu-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('avatar-dropdown').classList.add('hidden');
+      }
+    });
 
     /* ── Help panel ── */
     function openHelp() {

@@ -106,12 +106,18 @@ def test_single_verify_htmx_shows_cached_badge(client):
     assert "from cache" in resp.text
 
 
-def test_index_page(client):
-    resp = client.get("/")
+def test_index_page_redirects_without_auth(client):
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["location"]
+
+
+def test_index_page(auth_client):
+    resp = auth_client.get("/")
     assert resp.status_code == 200
     assert "Dashboard" in resp.text
 
 
-def test_jobs_page(client):
-    resp = client.get("/jobs")
+def test_jobs_page(auth_client):
+    resp = auth_client.get("/jobs")
     assert resp.status_code == 200

@@ -2,24 +2,47 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.auth import RequiresAdmin, RequiresAuth
 from app.config import settings
 from app.db import create_db_tables
 from app.providers import registry
-from app.routes import api_bulk, api_single, api_stats, health, ui
+from app.routes import api_bulk, api_single, api_stats, auth_routes, health, ui
+from app.routes import admin as admin_router
 
 _BASE_DIR = Path(__file__).parent.parent
 _STATIC_DIR = _BASE_DIR / "static"
 _SAMPLES_DIR = _BASE_DIR / "samples"
 
 
+def _bootstrap_admin() -> None:
+    if not settings.admin_email or not settings.admin_password:
+        return
+    import bcrypt
+    from sqlmodel import Session, select
+    from app.db import engine
+    from app.models import User
+    with Session(engine) as db:
+        if db.exec(select(User)).first():
+            return
+        pw_hash = bcrypt.hashpw(settings.admin_password.encode(), bcrypt.gensalt(rounds=12)).decode()
+        db.add(User(
+            email=settings.admin_email.strip().lower(),
+            password_hash=pw_hash,
+            role="admin",
+            is_active=True,
+        ))
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_tables()
+    _bootstrap_admin()
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
     if registry._client and not registry._client.is_closed:
@@ -38,6 +61,18 @@ if _STATIC_DIR.is_dir():
 if _SAMPLES_DIR.is_dir():
     app.mount("/samples", StaticFiles(directory=str(_SAMPLES_DIR)), name="samples")
 
+@app.exception_handler(RequiresAuth)
+async def _requires_auth(_: Request, __: RequiresAuth) -> RedirectResponse:
+    return RedirectResponse(url="/login", status_code=302)
+
+
+@app.exception_handler(RequiresAdmin)
+async def _requires_admin(_: Request, __: RequiresAdmin) -> HTMLResponse:
+    return HTMLResponse("<h1>403 — Admin access required</h1>", status_code=403)
+
+
+app.include_router(auth_routes.router)
+app.include_router(admin_router.router)
 app.include_router(health.router)
 app.include_router(api_single.router)
 app.include_router(api_bulk.router)

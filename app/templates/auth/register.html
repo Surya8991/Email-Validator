@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en" id="html-root" class="">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Request Access — Email Validator</title>
+  <script>
+    if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+    }
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' };</script>
+</head>
+<body class="min-h-screen flex bg-gray-50 dark:bg-gray-950">
+
+  <!-- Left: brand panel -->
+  <div class="hidden lg:flex lg:w-2/5 xl:w-1/2 bg-gradient-to-br from-indigo-600 to-violet-700 flex-col items-center justify-center p-12 text-white">
+    <div class="max-w-sm text-center">
+      <div class="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6 shadow-lg">✉</div>
+      <h1 class="text-3xl font-bold mb-3">EmailValidator</h1>
+      <p class="text-indigo-200 text-lg leading-relaxed">Request access to your team's email validation platform. An admin will approve your account.</p>
+    </div>
+  </div>
+
+  <!-- Right: form panel -->
+  <div class="flex-1 flex flex-col items-center justify-center p-8">
+    <div class="w-full max-w-sm">
+
+      <!-- Mobile brand -->
+      <div class="lg:hidden text-center mb-8">
+        <div class="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-xl font-bold mx-auto mb-3">✉</div>
+        <h1 class="text-xl font-bold text-gray-900 dark:text-white">Email<span class="text-indigo-600 dark:text-indigo-400">Validator</span></h1>
+      </div>
+
+      {% if success %}
+        <div class="text-center py-8">
+          <div class="w-14 h-14 bg-green-100 dark:bg-green-900/40 rounded-full flex items-center justify-center text-2xl mx-auto mb-4">✓</div>
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Request submitted</h2>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">Your account is pending admin approval. You'll be able to sign in once it's activated.</p>
+          <a href="/login" class="text-indigo-600 dark:text-indigo-400 text-sm font-medium hover:underline">← Back to sign in</a>
+        </div>
+      {% else %}
+        <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-1">Request access</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-8">Submit your details — an admin will activate your account</p>
+
+        {% if error %}
+        <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
+          {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="post" action="/register" class="space-y-5">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email address</label>
+            <input type="email" name="email" required autofocus
+              class="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3.5 py-2.5 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Password</label>
+            <input type="password" name="password" required minlength="8"
+              class="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3.5 py-2.5 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Confirm password</label>
+            <input type="password" name="confirm_password" required minlength="8"
+              class="w-full border border-gray-300 dark:border-gray-700 rounded-lg px-3.5 py-2.5 text-sm bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"/>
+          </div>
+          <button type="submit"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg text-sm transition shadow-sm">
+            Request Access
+          </button>
+        </form>
+
+        <p class="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
+          Already have an account?
+          <a href="/login" class="text-indigo-600 dark:text-indigo-400 font-medium hover:underline">Sign in</a>
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+</body>
+</html>

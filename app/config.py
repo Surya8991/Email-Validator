@@ -40,5 +40,12 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "info"
 
+    secret_key: str = "dev-secret-change-me-in-production"
+    production: bool = False
+
+    # Bootstrap admin — used only if User table is empty on startup
+    admin_email: str = ""
+    admin_password: str = ""
+
 
 settings = Settings()

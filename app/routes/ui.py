@@ -3,15 +3,16 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
+from app.auth import require_auth
 from app.config import settings
 from app.db import engine, is_postgres
-from app.models import EmailCache, EmailResult, Job
+from app.models import EmailCache, EmailResult, Job, User
 from app.providers.registry import get_enabled_providers
 
 router = APIRouter()
@@ -50,7 +51,7 @@ _STRATEGIES = [
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
         total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
@@ -73,22 +74,25 @@ async def dashboard(request: Request):
         "recent_jobs": recent_jobs,
         "enabled_providers": get_enabled_providers(),
         "active_page": "dashboard",
+        "current_user": current_user,
     })
 
 
 @router.get("/validate", response_class=HTMLResponse)
-async def validate_page(request: Request):
+async def validate_page(request: Request, current_user: User = Depends(require_auth)):
     return templates.TemplateResponse(request, "validate.html", {
         "enabled_providers": get_enabled_providers(),
         "strategies": _STRATEGIES,
         "active_page": "validate",
+        "current_user": current_user,
     })
 
 
 @router.get("/cache", response_class=HTMLResponse)
-async def cache_browser(request: Request):
+async def cache_browser(request: Request, current_user: User = Depends(require_auth)):
     return templates.TemplateResponse(request, "cache.html", {
         "active_page": "cache",
+        "current_user": current_user,
     })
 
 
@@ -119,7 +123,7 @@ async def cache_table_partial(request: Request, q: str = "", page: int = 1):
 
 
 @router.get("/analytics", response_class=HTMLResponse)
-async def analytics_page(request: Request):
+async def analytics_page(request: Request, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
         total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
@@ -176,11 +180,12 @@ async def analytics_page(request: Request):
         "total_cache": total_cache,
         "verdict_counts": verdict_counts,
         "active_page": "analytics",
+        "current_user": current_user,
     })
 
 
 @router.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
+async def settings_page(request: Request, current_user: User = Depends(require_auth)):
     provider_cfg = [
         {
             "name": "Bouncify",
@@ -216,21 +221,23 @@ async def settings_page(request: Request):
         "total_cache": total_cache,
         "smtp_probe": settings.enable_smtp_probe,
         "active_page": "settings",
+        "current_user": current_user,
     })
 
 
 @router.get("/jobs", response_class=HTMLResponse)
-async def jobs_list(request: Request):
+async def jobs_list(request: Request, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         jobs = session.exec(select(Job).order_by(Job.id.desc()).limit(50)).all()  # type: ignore[arg-type]
     return templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs,
         "active_page": "jobs",
+        "current_user": current_user,
     })
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
-async def job_detail(request: Request, job_id: int):
+async def job_detail(request: Request, job_id: int, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         job = session.get(Job, job_id)
         results = session.exec(
@@ -250,6 +257,7 @@ async def job_detail(request: Request, job_id: int):
             "job": job,
             "results": parsed,
             "active_page": "jobs",
+            "current_user": current_user,
         }
     )
 

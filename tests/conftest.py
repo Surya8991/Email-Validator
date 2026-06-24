@@ -44,3 +44,30 @@ def mock_zerobounce():
 def mock_hunter():
     with respx.mock(base_url="https://api.hunter.io") as mock:
         yield mock
+
+
+@pytest.fixture
+def auth_client(patch_db):
+    import bcrypt
+    from sqlmodel import Session
+    from app.main import app
+    from app.models import User
+
+    pw_hash = bcrypt.hashpw(b"testpass123", bcrypt.gensalt(rounds=4)).decode()
+    with Session(patch_db) as db:
+        existing = db.exec(
+            __import__("sqlmodel").select(User).where(User.email == "test@example.com")
+        ).first()
+        if not existing:
+            db.add(User(
+                email="test@example.com",
+                password_hash=pw_hash,
+                role="admin",
+                is_active=True,
+            ))
+            db.commit()
+
+    with TestClient(app) as c:
+        resp = c.post("/login", data={"email": "test@example.com", "password": "testpass123"})
+        assert resp.status_code in (200, 302), f"Login failed: {resp.status_code}"
+        yield c
