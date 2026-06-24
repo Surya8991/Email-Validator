@@ -21,3 +21,4 @@ htmlcov/
 .coverage
 .vercel/
 node_modules/
+.superpowers/
