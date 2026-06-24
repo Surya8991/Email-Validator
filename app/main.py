@@ -65,28 +65,12 @@ def _bootstrap_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import traceback
-    try:
-        create_db_tables()
-    except Exception:
-        print("[lifespan] create_db_tables failed:", flush=True)
-        traceback.print_exc()
-    try:
-        _bootstrap_admin()
-    except Exception:
-        print("[lifespan] _bootstrap_admin failed:", flush=True)
-        traceback.print_exc()
-    try:
-        registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
-    except Exception:
-        print("[lifespan] httpx client init failed:", flush=True)
-        traceback.print_exc()
+    create_db_tables()
+    _bootstrap_admin()
+    registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
-    try:
-        if registry._client and not registry._client.is_closed:
-            await registry._client.aclose()
-    except Exception:
-        pass
+    if registry._client and not registry._client.is_closed:
+        await registry._client.aclose()
 
 
 app = FastAPI(
@@ -129,23 +113,6 @@ _MAINTENANCE_HTML = (
 @app.exception_handler(RequiresMaintenance)
 async def _requires_maintenance(_: Request, __: RequiresMaintenance) -> HTMLResponse:
     return HTMLResponse(_MAINTENANCE_HTML, status_code=503)
-
-
-@app.exception_handler(Exception)
-async def _catch_all(request: Request, exc: Exception) -> HTMLResponse:
-    import traceback
-    tb = traceback.format_exc()
-    print(f"[unhandled] {request.method} {request.url.path}\n{tb}", flush=True)
-    pre_style = (
-        "white-space:pre-wrap;font-size:12px;"
-        "background:#f5f5f5;padding:12px;border-radius:6px"
-    )
-    body = (
-        "<h1>500 — Internal Server Error</h1>"
-        f"<p><b>{type(exc).__name__}</b>: {exc}</p>"
-        f"<pre style='{pre_style}'>{tb}</pre>"
-    )
-    return HTMLResponse(body, status_code=500)
 
 
 app.include_router(auth_routes.router)
