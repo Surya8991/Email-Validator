@@ -127,10 +127,14 @@ fi
 
 if [ -f pyproject.toml ]; then
   if grep -q '^\[build-system\]' pyproject.toml 2>/dev/null; then
-    fail "pyproject.toml has [build-system] — Vercel runs 'uv sync' and fails. Remove [build-system] and [project] sections."
+    fail "pyproject.toml has [build-system] — Vercel runs 'uv lock' and fails. Delete pyproject.toml and use ruff.toml + pytest.ini + mypy.ini instead."
+  elif grep -q '^\[project\]' pyproject.toml 2>/dev/null; then
+    fail "pyproject.toml has [project] table — Vercel runs 'uv lock' and fails. Delete it."
   else
-    ok "pyproject.toml has no [build-system] — will not conflict with Vercel"
+    warn "pyproject.toml exists without [project] — Vercel may still try 'uv lock' and fail. Consider deleting it."
   fi
+else
+  ok "pyproject.toml absent — Vercel will not attempt uv lock"
 fi
 
 if [ -f api/index.py ]; then
