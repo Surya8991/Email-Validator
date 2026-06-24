@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -8,7 +9,7 @@ from app.core.validator import validate_with_cache
 from app.schemas import ProviderResult, SingleVerifyRequest, SingleVerifyResponse
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _confidence(verdict: str, providers: dict[str, ProviderResult]) -> int:

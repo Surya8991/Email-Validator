@@ -1,6 +1,13 @@
-from mangum import Mangum
+import sys
+from pathlib import Path
 
-from app.main import app  # noqa: F401
+# Ensure project root is on sys.path so `app` package is importable
+_ROOT = Path(__file__).parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-# Vercel serverless entry point — wraps the FastAPI ASGI app
+from mangum import Mangum  # noqa: E402
+
+from app.main import app  # noqa: E402, F401
+
 handler = Mangum(app, lifespan="auto")

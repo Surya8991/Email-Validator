@@ -1,6 +1,7 @@
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -14,7 +15,7 @@ from app.models import EmailCache, EmailResult, Job
 from app.providers.registry import get_enabled_providers
 
 router = APIRouter()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 _STRATEGIES = [
     {
