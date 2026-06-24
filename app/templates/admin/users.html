@@ -9,11 +9,39 @@
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Users</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Manage team access and account status</p>
     </div>
-    <button onclick="document.getElementById('create-modal').classList.remove('hidden')"
-      class="btn-primary flex items-center gap-2">
-      + Create User
-    </button>
+    <div class="flex items-center gap-2">
+      <button onclick="document.getElementById('invite-modal').classList.remove('hidden')"
+        class="btn-primary flex items-center gap-2">
+        ✉ Invite User
+      </button>
+      <button onclick="document.getElementById('create-modal').classList.remove('hidden')"
+        class="border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition flex items-center gap-2">
+        + Create User
+      </button>
+    </div>
   </div>
+
+  {% if invite_url %}
+  <div class="mb-5 px-4 py-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+    <p class="text-sm font-semibold text-green-800 dark:text-green-300 mb-2">
+      ✅ Invite link generated for <strong>{{ invite_email }}</strong> — share this link:
+    </p>
+    <div class="flex items-center gap-2">
+      <input id="invite-link-box" type="text" readonly value="{{ invite_url }}"
+        class="flex-1 text-xs font-mono border border-green-300 dark:border-green-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 select-all"/>
+      <button onclick="copyInviteLink()" class="shrink-0 text-xs bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition font-medium">
+        Copy
+      </button>
+    </div>
+    <p class="text-xs text-green-600 dark:text-green-400 mt-1.5">Link expires in 7 days. One-time use.</p>
+  </div>
+  {% endif %}
+
+  {% if invite_error == 'already_exists' %}
+  <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-xl text-sm text-red-700 dark:text-red-300">
+    A user with that email already exists. Use <strong>Activate</strong> on the existing account instead.
+  </div>
+  {% endif %}
 
   <!-- Stats -->
   <div class="grid grid-cols-2 gap-4 mb-6">
@@ -30,6 +58,47 @@
   {% if form_error %}
   <div class="mb-4 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
     {{ form_error }}
+  </div>
+  {% endif %}
+
+  <!-- Pending invites -->
+  {% if invites %}
+  <div class="card overflow-hidden mb-6 border-indigo-100 dark:border-indigo-900/40">
+    <div class="px-5 py-3 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-900/40 flex items-center gap-2">
+      <span class="font-semibold text-sm text-indigo-700 dark:text-indigo-300">✉ Pending Invites</span>
+      <span class="bg-indigo-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{{ invites | length }}</span>
+    </div>
+    <table class="w-full text-sm">
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for inv in invites %}
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
+          <td class="px-5 py-3">
+            <div class="flex items-center gap-3">
+              <div class="w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-300 text-xs font-bold uppercase">
+                {{ inv.email[0] }}
+              </div>
+              <span class="font-medium text-gray-900 dark:text-white text-sm">{{ inv.email }}</span>
+            </div>
+          </td>
+          <td class="px-5 py-3">
+            {% if inv.role == 'admin' %}
+              <span class="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-xs font-semibold px-2 py-0.5 rounded-full">admin</span>
+            {% else %}
+              <span class="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs font-semibold px-2 py-0.5 rounded-full">user</span>
+            {% endif %}
+          </td>
+          <td class="px-5 py-3 text-xs text-gray-400">
+            Expires {{ inv.expires_at.strftime('%b %d, %Y') }}
+          </td>
+          <td class="px-5 py-3 text-right">
+            <form method="post" action="/admin/invites/{{ inv.id }}/revoke">
+              <button type="submit" class="text-xs text-red-500 hover:underline font-medium">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
   {% endif %}
 
@@ -149,4 +218,58 @@
     </form>
   </div>
 </div>
+
+<!-- Invite user modal -->
+<div id="invite-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Invite User</h2>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">A one-time link will be generated for them to set their password.</p>
+      </div>
+      <button onclick="document.getElementById('invite-modal').classList.add('hidden')"
+        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none shrink-0 ml-4">✕</button>
+    </div>
+    <form method="post" action="/admin/invite" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email</label>
+        <input type="email" name="email" required autofocus placeholder="user@example.com" class="input-base w-full"/>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Role</label>
+        <select name="role" class="input-base w-full">
+          <option value="user">User</option>
+          {% if current_user.role == 'superadmin' %}
+          <option value="admin">Admin</option>
+          {% endif %}
+        </select>
+        <p class="text-xs text-gray-400 mt-1">Account is activated immediately on invite acceptance.</p>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button type="submit" class="btn-primary flex-1">Generate invite link</button>
+        <button type="button" onclick="document.getElementById('invite-modal').classList.add('hidden')"
+          class="flex-1 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function copyInviteLink() {
+  const box = document.getElementById('invite-link-box');
+  box.select();
+  navigator.clipboard.writeText(box.value).then(() => {
+    const btn = event.target;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  });
+}
+{% if invite_url %}
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('invite-link-box')?.select();
+});
+{% endif %}
+</script>
 {% endblock %}

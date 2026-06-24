@@ -78,3 +78,14 @@ class TeamMembership(SQLModel, table=True):
     requested_at: datetime = Field(default_factory=datetime.utcnow)
     approved_at: datetime | None = None
     approved_by: int | None = Field(default=None, foreign_key="user.id")
+
+
+class UserInvite(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    email: str = Field(index=True)
+    token_hash: str = Field(index=True, unique=True)
+    role: str = Field(default="user")  # "user" | "admin"
+    invited_by: int | None = Field(default=None, foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    used_at: datetime | None = None

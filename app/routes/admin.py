@@ -1,6 +1,8 @@
+import hashlib
 import json
+import secrets
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import bcrypt
@@ -13,8 +15,19 @@ from sqlmodel import Session, select
 from app.auth import require_admin, require_superadmin
 from app.config import settings
 from app.db import engine, is_postgres
-from app.models import ApiUsage, EmailCache, EmailResult, Job, Team, TeamMembership, User
+from app.models import (
+    ApiUsage,
+    EmailCache,
+    EmailResult,
+    Job,
+    Team,
+    TeamMembership,
+    User,
+    UserInvite,
+)
 from app.providers.registry import get_enabled_providers
+
+INVITE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/admin")
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -88,11 +101,24 @@ async def admin_users(request: Request, current_user: User = Depends(require_adm
         users = db.exec(select(User).order_by(User.created_at.desc())).all()  # type: ignore[arg-type]
         active_count = sum(1 for u in users if u.is_active)
         pending_count = sum(1 for u in users if not u.is_active)
+        now = datetime.utcnow()
+        invites = db.exec(
+            select(UserInvite)
+            .where(UserInvite.used_at == None, UserInvite.expires_at > now)  # noqa: E711
+            .order_by(UserInvite.created_at.desc())  # type: ignore[arg-type]
+        ).all()
+    invite_url = request.query_params.get("invite_url")
+    invite_email = request.query_params.get("invite_email")
+    invite_error = request.query_params.get("invite_error")
     return templates.TemplateResponse(request, "admin/users.html", {
         **_admin_ctx("users", current_user),
         "users": users,
         "active_count": active_count,
         "pending_count": pending_count,
+        "invites": invites,
+        "invite_url": invite_url,
+        "invite_email": invite_email,
+        "invite_error": invite_error,
     })
 
 
@@ -149,6 +175,70 @@ async def admin_deactivate_user(
         user = db.get(User, user_id)
         if user:
             user.is_active = False
+            db.commit()
+    return RedirectResponse(url="/admin/users", status_code=302)
+
+
+# ── Invites ───────────────────────────────────────────────────────────────────
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post("/invite")
+async def admin_send_invite(
+    request: Request,
+    email: str = Form(...),
+    role: str = Form("user"),
+    current_user: User = Depends(require_admin),
+):
+    email = email.strip().lower()
+    role = role if role in ("user", "admin") else "user"
+    # superadmin-only: can invite admins; plain admin can only invite users
+    if role == "admin" and current_user.role != "superadmin":
+        role = "user"
+
+    with Session(engine) as db:
+        # Don't invite existing users
+        existing_user = db.exec(select(User).where(User.email == email)).first()
+        if existing_user:
+            return RedirectResponse(
+                url="/admin/users?invite_error=already_exists", status_code=302
+            )
+        # Revoke any prior unused invite for same email
+        old = db.exec(
+            select(UserInvite).where(UserInvite.email == email, UserInvite.used_at == None)  # noqa: E711
+        ).first()
+        if old:
+            db.delete(old)
+
+        raw_token = secrets.token_urlsafe(32)
+        db.add(UserInvite(
+            email=email,
+            token_hash=_hash_invite_token(raw_token),
+            role=role,
+            invited_by=current_user.id,
+            expires_at=datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS),
+        ))
+        db.commit()
+
+    base_url = str(request.base_url).rstrip("/")
+    invite_url = f"{base_url}/invite/{raw_token}"
+    return RedirectResponse(
+        url=f"/admin/users?invite_url={invite_url}&invite_email={email}",
+        status_code=302,
+    )
+
+
+@router.post("/invites/{invite_id}/revoke")
+async def admin_revoke_invite(
+    invite_id: int,
+    current_user: User = Depends(require_admin),
+):
+    with Session(engine) as db:
+        invite = db.get(UserInvite, invite_id)
+        if invite and not invite.used_at:
+            db.delete(invite)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 

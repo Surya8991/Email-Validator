@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-24 (Session 2). Current VERSION: **0.2.0**
+> Last updated: 2026-06-24 (Session 6). Current VERSION: **0.6.0**
 
 ---
 
@@ -13,18 +13,22 @@
 3. Run app:         python -m uvicorn app.main:app --reload --port 8000
    → http://localhost:8000
 4. API docs:        http://localhost:8000/docs  (FastAPI auto-generated)
-5. Tests:           python -m pytest tests/ -q  → 25 passing
+5. Tests:           python -m pytest tests/ -q  → 26 passing
 6. Lint:            python -m ruff check app/ tests/  → 0 errors
 7. Health check:    GET http://localhost:8000/api/health
    → {"status":"ok","providers_enabled":["local","bouncify"]}
 8. Bouncify key:    In .env as BOUNCIFY_API_KEY (never commit)
 9. DB file:         email_validator.db (auto-created on first run, git-ignored)
-10. Schema change?  Delete email_validator.db before restarting — SQLModel
-    does NOT run migrations, it only creates missing tables.
+10. Schema change?  Delete email_validator.db (SQLite) or run ALTER TABLE manually
+    on Neon — SQLModel does NOT run migrations, only creates missing tables.
+11. Auth:           Login at /login — email + password. New users start inactive (admin must activate).
+12. Admin panel:    /admin — requires role 'admin' or 'superadmin'.
+13. Superadmin:     Set SUPERADMIN_EMAIL in Vercel env — promoted on every startup (idempotent).
 ```
 
 **Do NOT:**
-- Use `pip install -e ".[dev]"` — editable install broken on Python 3.14 + setuptools. Install deps directly: `pip install fastapi uvicorn[standard] httpx pydantic pydantic-settings sqlmodel jinja2 python-multipart email-validator dnspython disposable-email-domains tenacity aiofiles pytest pytest-asyncio respx ruff`
+- Use `pip install -e ".[dev]"` — editable install broken on Python 3.14 + setuptools. Install deps directly: `pip install fastapi uvicorn httpx pydantic pydantic-settings sqlmodel jinja2 python-multipart email-validator dnspython disposable-email-domains tenacity aiofiles pytest pytest-asyncio respx ruff bcrypt psycopg2-binary`
+- Use `passlib[bcrypt]` — incompatible with bcrypt>=5.0 (`detect_wrap_bug` ValueError on startup). Use `bcrypt` directly: `bcrypt.hashpw()` + `bcrypt.checkpw()`.
 - Use old Starlette TemplateResponse signature: `templates.TemplateResponse("page.html", {"request": request, ...})` — broken on Starlette 1.3.1. Always use: `templates.TemplateResponse(request, "page.html", {...})` (request first, no `request` in context dict)
 - Cache `unknown` verdicts — they are transient (network/API errors). Only `valid`, `invalid`, `risky` go into `EmailCache`
 - Commit `.env` — it contains `BOUNCIFY_API_KEY`. Pre-scan before every commit
@@ -68,16 +72,16 @@
 - `unknown` verdicts never cached (transient)
 - Lazy expiry: stale row deleted on next access. Bulk purge via `purge_expired()`
 
-### Test Suite (25 tests)
+### Test Suite (26 tests)
 
 ```
 tests/providers/test_bouncify.py   — 4 tests  (respx mocks, deliverable/undeliverable/accept_all/no_key)
 tests/providers/test_local.py      — 7 tests  (syntax, MX, disposable, role, free, bulk)
 tests/test_cache.py                — 7 tests  (miss/hit, case, expiry, upsert, unknown, purge)
-tests/test_routes.py               — 7 tests  (health, JSON verify, cache hit, HTMX verify, cached badge, index, jobs)
+tests/test_routes.py               — 8 tests  (health, JSON verify, cache hit, HTMX verify, cached badge, index+auth, jobs+auth, redirect-without-auth)
 ```
 
-All external HTTP calls are mocked with `respx`. No real API calls in tests.
+All external HTTP calls are mocked with `respx`. Auth tests use `auth_client` fixture (creates test admin, logs in via TestClient). No real API calls in tests.
 
 ---
 
@@ -159,10 +163,14 @@ uploads/              gitignored — CSV uploads + results_*.csv
 
 | Table | Purpose | Key Fields |
 |---|---|---|
-| `Job` | Bulk job tracking | `id`, `status` (queued/running/done/failed), `total`, `processed`, `strategy`, `providers` |
+| `Job` | Bulk job tracking | `id`, `status`, `total`, `processed`, `strategy`, `providers`, `user_id` |
 | `EmailResult` | Per-email result in a bulk job | `job_id`, `email`, `verdict`, `provider_data` (JSON) |
 | `EmailCache` | 30-day result cache | `email` (unique), `verdict`, `provider_data`, `validated_at`, `expires_at` |
-| `ApiUsage` | Per-provider daily call counter | `provider`, `date`, `calls` (not yet wired to routes) |
+| `ApiUsage` | Per-provider daily call counter | `provider`, `date`, `calls` |
+| `User` | Auth user | `id`, `email`, `password_hash`, `role` (user/admin/superadmin), `is_active`, `created_at`, `last_login` |
+| `UserSession` | Session tokens | `id`, `user_id`, `token_hash` (SHA-256), `expires_at` — 7-day sliding TTL |
+| `Team` | Org teams | `id`, `name`, `description`, `created_by` |
+| `TeamMembership` | User↔Team join | `team_id`, `user_id`, `status` (pending/active/rejected), `approved_by` |
 
 ---
 
@@ -311,9 +319,12 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 
 | Session | Date | Version | Key Work |
 |---|---|---|---|
-| 1 | 2026-06-23 | v0.1.0 | Initial build — FastAPI scaffold, 5 providers (local/bouncify/zerobounce/neverbounce/hunter), 4 strategies, SQLite+SQLModel, HTMX+Tailwind UI, bulk CSV pipeline, BackgroundTasks worker, Jinja2 templates, 16 tests passing, Bouncify API key live-tested |
-| 2 | 2026-06-24 | v0.2.0 | Email result cache — `EmailCache` table, 30-day TTL, `validate_with_cache()`, cache-aware bulk worker, `⚡ cached` badge in UI, `purge_expired()`, 7 new cache tests → 25 total passing. Phase 1+2+3 plan approved. PROJECT_LOG created. |
-| 3 | 2026-06-24 | v0.3.0 | Phase 1+2+3 complete — sidebar layout + dark mode (base.html), Dashboard (`/`), Validate (`/validate`) with visual strategy cards + drag-drop, Cache Browser (`/cache`) HTMX search/delete, Analytics (`/analytics`) Chart.js pie/line/bar, Settings (`/settings`) provider status + domain lookup, `GET /api/stats`, `GET /api/domain/{domain}`, `DELETE /api/cache/{id}`, `POST /api/cache/purge`, smart CSV export (verdict filter), confidence score bar + copy button on result cards. 25 tests, ruff clean. |
+| 1 | 2026-06-23 | v0.1.0 | Initial build — FastAPI scaffold, 5 providers, 4 strategies, SQLite+SQLModel, HTMX+Tailwind UI, bulk CSV pipeline, BackgroundTasks worker, Jinja2 templates, 16 tests passing |
+| 2 | 2026-06-24 | v0.2.0 | Email result cache — `EmailCache` table, 30-day TTL, `validate_with_cache()`, cache-aware bulk worker, `⚡ cached` badge, `purge_expired()`, 7 new cache tests → 25 total. PROJECT_LOG created. |
+| 3 | 2026-06-24 | v0.3.0 | Phase 1+2+3 — sidebar layout + dark mode, Dashboard, Validate (strategy cards + drag-drop), Cache Browser (HTMX), Analytics (Chart.js), Settings, domain lookup, smart CSV export, confidence score cards. 25 tests, ruff clean. |
+| 4 | 2026-06-24 | v0.4.0 | Top navbar refactor (replaced sidebar) + Neon PostgreSQL + GitHub Actions bulk flow. Deployed to Vercel. |
+| 5 | 2026-06-24 | v0.5.0 | Session-based auth — login/register/logout, `User`+`UserSession`+`Team`+`TeamMembership` tables, three-tier roles (user/admin/superadmin), `SUPERADMIN_EMAIL` env bootstrap, admin panel (`/admin`) with dark indigo sidebar, users/teams/stats/usage/providers pages, split-panel login design, avatar dropdown in nav, 39-check pre-push checklist, 26 tests. `bcrypt` direct (passlib dropped). |
+| 6 | 2026-06-24 | v0.6.0 | Hotfixes — missing `user_id` column on `job` table (ALTER TABLE on Neon), `RedirectResponse` import in ui.py, `UTC` import cleanup, E501 line-length fixes, admin/superadmin nav visibility fix (role check was `=='admin'` not `in ('admin','superadmin')`), mobile menu Teams+Admin links, avatar dropdown role badge + Admin panel quick-link. |
 
 ---
 
@@ -348,4 +359,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-24 — Session 2 — v0.2.0_
+_Last updated: 2026-06-24 — Session 6 — v0.6.0_
