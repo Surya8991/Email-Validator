@@ -11,7 +11,7 @@ FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBoun
 - **Storage:** SQLModel + **PostgreSQL (Neon)** — persistent. SQLite used locally when DATABASE_URL is unset.
 - **Frontend:** HTMX + Tailwind CDN + Jinja2 templates (no build step)
 - **Config:** pydantic-settings + .env
-- **Serverless:** Mangum ASGI adapter for Vercel
+- **Serverless:** Vercel native Python runtime (auto-detects ASGI — no Mangum)
 - **Bulk processing:** GitHub Actions workflow (`bulk_process.yml`) — no timeout limit
 - **Tests:** pytest + pytest-asyncio + respx
 - **Lint/types:** ruff (ruff.toml) + mypy (mypy.ini)
@@ -34,16 +34,16 @@ app/
     api_single.py, api_bulk.py, api_stats.py, health.py
   workers/         # bulk_worker.py (BackgroundTasks fallback for local dev)
   templates/
-    base.html      # Main nav with avatar dropdown + admin tab (admin/superadmin only) + Teams link
+    base.html      # Main nav (Lucide SVG icons, backdrop-blur, underline active state, avatar dropdown + admin tab)
     auth/          # login.html, register.html (split-panel design)
     admin/         # base.html (sectioned sidebar: Data/Access/Config/Superadmin), users.html (search+filter+invite+limit), stats.html (A6 dashboard), audit_log.html, sessions.html, sys_settings.html, usage.html, providers.html, teams.html, team_detail.html
     teams.html     # User-facing team cards with join/cancel request
 api/
-  index.py         # Mangum handler for Vercel (sys.path guard + handler = Mangum(app))
+  index.py         # Vercel entry — sys.path guard + `from app.main import app` (ASGI auto-detected)
 scripts/
   init_db.py       # One-time Neon table creation — run once per new DB
   process_job.py   # GitHub Actions bulk processor — reads job.csv_data from DB
-  pre_push_check.sh # 34-check safety checklist (auto-runs via .githooks/pre-push)
+  pre_push_check.sh # 38-check safety checklist (auto-runs via .githooks/pre-push)
 .github/
   workflows/
     bulk_process.yml  # workflow_dispatch: triggered by api_bulk.py with job_id
@@ -129,7 +129,8 @@ All normalize to: `valid | invalid | risky | unknown`
 - **No `pyproject.toml`** — Vercel runs `uv lock` on any pyproject.toml and fails. Config split into `ruff.toml` + `pytest.ini` + `mypy.ini`.
 - **`.python-version`** controls Python version (must be `3.12`)
 - **`vercel.json`**: `"maxDuration": 10` (Hobby limit)
-- **`api/index.py`**: `sys.path.insert(0, root)` guard + `handler = Mangum(app, lifespan="auto")`
+- **`api/index.py`**: `sys.path.insert(0, root)` guard + `from app.main import app` — Vercel auto-detects the ASGI app. **Do NOT use Mangum** (it produces AWS Lambda response shape and Vercel returns `FUNCTION_INVOCATION_FAILED`).
+- **Lifespan schema migrations**: `app/db.py:_apply_lightweight_migrations()` runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for any entry in `_PG_COLUMN_ADDS` on every cold start. Idempotent, Postgres-only. Append to this list whenever a new column is added to a model — `create_all` will not alter existing tables.
 - **Jinja2Templates**: must use absolute `Path(__file__).parent.parent / "templates"` — relative paths break in Vercel
 - **SQLite on Vercel**: ephemeral `/tmp/` — data lost on cold starts. Always use DATABASE_URL for production.
 
@@ -165,4 +166,4 @@ bash scripts/pre_push_check.sh
 # runs automatically via git hook (install once):
 git config core.hooksPath .githooks
 ```
-34+ checks across 8 groups: tests, lint, secrets, Vercel config, GitHub Actions, debug debris, critical files, auth.
+38 checks across 8 groups: tests, lint, secrets, Vercel config, GitHub Actions, debug debris, critical files, auth.

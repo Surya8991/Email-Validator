@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-24 (Session 7). Current VERSION: **0.7.0**
+> Last updated: 2026-06-24 (Session 8). Current VERSION: **0.8.0**
 
 ---
 
@@ -19,8 +19,11 @@
    → {"status":"ok","providers_enabled":["local","bouncify"]}
 8. Bouncify key:    In .env as BOUNCIFY_API_KEY (never commit)
 9. DB file:         email_validator.db (auto-created on first run, git-ignored)
-10. Schema change?  Delete email_validator.db (SQLite) or run ALTER TABLE manually
-    on Neon — SQLModel does NOT run migrations, only creates missing tables.
+10. Schema change?  SQLite: delete email_validator.db. Neon: for missing COLUMNS,
+    append the (table, column, DDL) tuple to `_PG_COLUMN_ADDS` in app/db.py — it
+    runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at startup (idempotent).
+    For new tables, create_all handles it automatically. Drops/renames still
+    require manual SQL.
 11. Auth:           Login at /login — email + password. New users start inactive (admin must activate).
 12. Admin panel:    /admin — requires role 'admin' or 'superadmin'.
 13. Superadmin:     Set SUPERADMIN_EMAIL in Vercel env — promoted on every startup (idempotent).
@@ -35,7 +38,7 @@
 - Rename or move `email_validator.db` manually — if schema changes, delete it (SQLModel auto-recreates tables on startup via `create_db_tables()`)
 - Call `get_all_providers()` without a live `httpx.AsyncClient` — the lifespan hook in `main.py` sets `registry._client`. Outside lifespan (e.g. tests), the client is lazy-created but never closed properly
 - Use `validate()` directly from routes — always use `validate_with_cache()` so cache is checked first
-- Add new SQLModel table without deleting old DB first — `SQLModel.metadata.create_all()` only creates missing tables, does not run ALTER TABLE
+- Add a new SQLModel **column** without registering it in `_PG_COLUMN_ADDS` (app/db.py) — `create_all()` will silently skip it on existing Postgres tables and you'll get `UndefinedColumn` 500s in production
 - Use `hatchling` as build-backend — broken on Python 3.14. Use `setuptools.build_meta`
 - Use `socket` to check domain instead of `dnspython` — dnspython is already a dep and handles edge cases (NXDOMAIN vs timeout)
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
@@ -191,10 +194,17 @@ templates.TemplateResponse(request, "page.html", {"key": "value"})
 templates.TemplateResponse("page.html", {"request": request, "key": "value"})
 ```
 
-### 2. SQLModel schema changes require DB delete
-`create_db_tables()` calls `SQLModel.metadata.create_all(engine)` — this only creates missing tables, never alters existing ones. Adding a column to a model and restarting will NOT update the table. The symptom is a silent `OperationalError: no such column` at runtime.
+### 2. SQLModel schema changes — column adds are auto-migrated, but only if registered
+`create_db_tables()` calls `SQLModel.metadata.create_all(engine)` which creates missing **tables** but never alters existing ones. The lifespan also runs `_apply_lightweight_migrations()` (Postgres-only) which iterates `_PG_COLUMN_ADDS` in `app/db.py` and runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 
-**Fix:** Delete `email_validator.db` before restarting after any model change. In production: use Alembic.
+**When adding a column to a model:**
+1. Add it to the SQLModel class
+2. Append `('"tablename"', "column_name", "POSTGRES_TYPE")` to `_PG_COLUMN_ADDS` in `app/db.py`
+3. Done — next cold start applies it idempotently
+
+If you skip step 2, you'll see `psycopg2.errors.UndefinedColumn` 500s on any route that selects from that table. Drops, renames, and constraint changes still require manual SQL or Alembic.
+
+**Local SQLite:** delete `email_validator.db` after any model change — `create_all` recreates everything fresh.
 
 ### 3. `unknown` verdict must never be cached
 Transient errors (API timeout, rate limit, network failure) all return `verdict="unknown"`. If cached, a permanently `unknown` result means the email is never re-validated. `set_cache()` and `_validate_with_cache()` in bulk_worker both check `if verdict != "unknown"` before writing.
@@ -330,6 +340,7 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | 6 | 2026-06-24 | v0.6.0 | Hotfixes — missing `user_id` column on `job` table (ALTER TABLE on Neon), `RedirectResponse` import in ui.py, `UTC` import cleanup, E501 line-length fixes, admin/superadmin nav visibility fix (role check was `=='admin'` not `in ('admin','superadmin')`), mobile menu Teams+Admin links, avatar dropdown role badge + Admin panel quick-link. |
 | 6b | 2026-06-24 | v0.6.1 | User invite flow — `UserInvite` model, `POST /admin/invite`, `POST /admin/invites/{id}/revoke`, `GET/POST /invite/{token}`, invite.html, users.html invite modal + URL banner + pending invites table. SHA-256 token pattern, superadmin-only admin invites, auto-login on acceptance. |
 | 7 | 2026-06-24 | v0.7.0 | Admin features A2→A6 + design overhaul D1-D7 — A2: user search/filter by email/role/status; A1: AuditLog model + log all write actions, `/admin/audit-log` with pagination; A3: `/admin/sessions` session manager (superadmin, revoke any session); A4: SystemSetting model, `/admin/sys-settings` (registration_open, maintenance_mode, default_validation_limit); A5: User.validation_limit monthly cap enforced in HTMX verify, progress bar in users table, set-limit modal; A6: dashboard quick-action cards + superadmin section + dark-mode-aware chart; D1-D7: admin sidebar sectioned (Data/Access/Config/Superadmin), dark mode toggle in admin, maintenance mode 503 handler, register.html already matched login design. Neon migration: auditlog + systemsetting tables created, validation_limit column added. |
+| 8 | 2026-06-24 | v0.8.0 | **Vercel runtime fix + auto-migrations + navbar redesign**. Dropped Mangum (returns AWS Lambda response shape → Vercel rejects with `FUNCTION_INVOCATION_FAILED`); `api/index.py` now exposes ASGI `app` directly and Vercel auto-detects it. Added lifespan schema migration `_apply_lightweight_migrations()` in `app/db.py` that runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` from `_PG_COLUMN_ADDS` — fixes the `user.validation_limit` missing-column 500 on Neon and prevents class of bug going forward (just append to the list when adding a column). Navbar redesign D8: replaced emoji icons with inline Lucide SVGs, subtle underline active state instead of indigo pill, backdrop-blur translucent header, gradient brand mark with indigo glow on hover, provider-dots in a small pill container, avatar uses gradient + hover ring, theme toggle uses sun/moon SVGs that swap via `dark:` (no JS textContent hack). Removed `mangum` from requirements. Pre-push checklist updated (38 checks; no longer asserts Mangum presence). |
 
 ---
 
@@ -364,4 +375,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-24 — Session 6 — v0.6.0_
+_Last updated: 2026-06-24 — Session 8 — v0.8.0_

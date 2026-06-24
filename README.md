@@ -24,7 +24,8 @@ A multi-provider email validation web app with auth, teams, and an admin panel. 
 - **Analytics dashboard** — verdict trends, top invalid domains, cache stats (Chart.js)
 - **REST API** — full OpenAPI docs at `/docs`
 - **Dark mode** — persisted via localStorage
-- **Vercel-ready** — Mangum ASGI adapter, persistent PostgreSQL via Neon
+- **Vercel-ready** — native ASGI on Vercel's Python runtime, persistent PostgreSQL via Neon
+- **Auto schema patches** — startup migration adds missing Postgres columns idempotently (no Alembic needed for simple adds)
 
 ---
 
@@ -38,7 +39,7 @@ A multi-provider email validation web app with auth, teams, and an admin panel. 
 | ORM / DB | SQLModel + **PostgreSQL (Neon)** |
 | Frontend | HTMX + Tailwind CDN + Jinja2 |
 | Charts | Chart.js 4.4 |
-| Serverless | Mangum (Vercel) |
+| Serverless | Vercel native Python (ASGI auto-detected) |
 | Bulk processing | GitHub Actions (bypasses Vercel 10s timeout) |
 | Tests | pytest + pytest-asyncio + respx |
 | Lint | ruff |
@@ -116,7 +117,7 @@ Add `DATABASE_URL` to your local `.env`, then:
 python scripts/init_db.py
 ```
 
-Tables: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`
+Tables: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`, `userinvite`, `auditlog`, `systemsetting`
 
 ---
 
@@ -170,8 +171,11 @@ Tables: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `
 | Admin Overview | `/admin` | Admin+ |
 | Admin Users | `/admin/users` | Admin+ |
 | Admin Teams | `/admin/teams` | Admin+ |
+| Admin Audit Log | `/admin/audit-log` | Admin+ |
 | Admin Usage | `/admin/usage` | Admin+ |
 | Admin Providers | `/admin/providers` | Admin+ |
+| Admin Sessions | `/admin/sessions` | Superadmin |
+| Admin System Settings | `/admin/sys-settings` | Superadmin |
 
 ---
 
@@ -247,7 +251,7 @@ Auth tests use an in-memory SQLite DB and a logged-in `auth_client` fixture — 
 ruff check .            # lint
 ruff format .           # format
 mypy app/               # type check
-bash scripts/pre_push_check.sh   # 39-check pre-push gate (runs auto via git hook)
+bash scripts/pre_push_check.sh   # 38-check pre-push gate (runs auto via git hook)
 ```
 
 ---
@@ -271,7 +275,7 @@ app/
 ├── auth.py              # Session helpers, require_auth/admin/superadmin guards
 ├── config.py            # pydantic-settings, .env loader
 ├── db.py                # SQLModel engine, URL normalization
-├── models.py            # All DB tables (Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership)
+├── models.py            # All DB tables (Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership, UserInvite, AuditLog, SystemSetting)
 ├── schemas.py           # Pydantic request/response DTOs
 ├── providers/           # bouncify, zerobounce, neverbounce, hunter, local, registry
 ├── core/                # validator.py, csv_io.py, cache.py, retry.py
@@ -290,9 +294,9 @@ app/
     ├── admin/           # base.html, users.html, stats.html, usage.html, providers.html, teams.html, team_detail.html
     └── teams.html       # User-facing team cards
 api/
-└── index.py             # Mangum handler for Vercel
+└── index.py             # Vercel entry — exposes ASGI `app` directly (no Mangum)
 scripts/
 ├── init_db.py           # One-time DB table creation
 ├── process_job.py       # GitHub Actions bulk processor
-└── pre_push_check.sh    # 39-check pre-push safety gate
+└── pre_push_check.sh    # 38-check pre-push safety gate
 ```
