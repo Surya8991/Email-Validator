@@ -6,7 +6,13 @@ from sqlmodel import Session, SQLModel, create_engine
 def _db_url() -> str:
     from app.config import settings
     if settings.database_url:
-        return settings.database_url
+        url = settings.database_url
+        # SQLAlchemy 2.x requires explicit dialect — normalize Neon/Supabase URLs
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif url.startswith("postgresql://") and "+psycopg" not in url:
+            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return url
     # Auto-detect Vercel (read-only filesystem — must use /tmp)
     if os.getenv("VERCEL"):
         return "sqlite:////tmp/email_validator.db"
@@ -17,7 +23,8 @@ def _connect_args() -> dict:
     url = _db_url()
     if url.startswith("sqlite"):
         return {"check_same_thread": False}
-    return {}
+    # Neon + most managed Postgres require SSL
+    return {"sslmode": "require"}
 
 
 DATABASE_URL = _db_url()
