@@ -33,6 +33,25 @@ engine = create_engine(DATABASE_URL, connect_args=_connect_args())
 
 def create_db_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    _apply_lightweight_migrations()
+
+
+# (table, column, DDL fragment) — applied at startup with ADD COLUMN IF NOT EXISTS.
+# Postgres-only; SQLite already creates everything fresh via create_all on /tmp.
+_PG_COLUMN_ADDS: list[tuple[str, str, str]] = [
+    ('"user"', "validation_limit", "INTEGER"),
+]
+
+
+def _apply_lightweight_migrations() -> None:
+    if not is_postgres():
+        return
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        for table, column, ddl in _PG_COLUMN_ADDS:
+            conn.execute(text(
+                f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
+            ))
 
 
 def get_session():
