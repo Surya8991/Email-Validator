@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # Max emails per bulk CSV (0 = unlimited). Recommended: 50-100 on Vercel.
     max_bulk_emails: int = 0
 
+    # GitHub Actions bulk processing
+    # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs
+    github_pat: str = ""
+    github_repo: str = "Layruss98266/Email-Validator"  # owner/repo
+
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "info"

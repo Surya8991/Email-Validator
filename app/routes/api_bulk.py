@@ -1,9 +1,11 @@
 import csv
 import io
+import json
 import os
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -18,10 +20,34 @@ router = APIRouter()
 def _upload_dir() -> str:
     if settings.upload_dir:
         return settings.upload_dir
-    # Vercel has a read-only filesystem except /tmp
     if os.getenv("VERCEL"):
         return "/tmp/uploads"
     return "uploads"
+
+
+async def _trigger_github_actions(job_id: int) -> bool:
+    """Trigger bulk_process.yml workflow_dispatch for this job. Returns True on success."""
+    if not settings.github_pat or not settings.github_repo:
+        return False
+    try:
+        owner, repo = settings.github_repo.split("/", 1)
+    except ValueError:
+        return False
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/bulk_process.yml/dispatches"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.github_pat}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                json={"ref": "main", "inputs": {"job_id": str(job_id)}},
+            )
+        return resp.status_code == 204
+    except Exception:
+        return False
 
 
 @router.post("/api/bulk", response_model=BulkJobResponse)
@@ -33,8 +59,9 @@ async def create_bulk_job(
     strategy: str = Form(default="bouncify_only"),
     cache_ttl_days: int = Form(default=0),
 ):
+    contents = await file.read()
+
     if settings.max_bulk_emails > 0:
-        contents = await file.read()
         row_count = contents.count(b"\n")
         if row_count > settings.max_bulk_emails:
             raise HTTPException(
@@ -44,9 +71,11 @@ async def create_bulk_job(
                     "Reduce the file size or raise MAX_BULK_EMAILS."
                 ),
             )
-    else:
-        contents = await file.read()
 
+    # Decode for DB storage (GitHub Actions reads csv_data from DB)
+    csv_str = contents.decode("utf-8-sig")  # strips BOM if present
+
+    # Also write to disk for local BackgroundTask fallback
     upload_dir = _upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
     filepath = os.path.join(upload_dir, f"upload_{id(contents)}.csv")
@@ -58,17 +87,22 @@ async def create_bulk_job(
             strategy=strategy,
             providers=providers,
             filename=file.filename,
+            csv_data=csv_str,
         )
         session.add(job)
         session.commit()
         session.refresh(job)
         job_id = job.id
 
-    # 0 = no cache, >0 = custom TTL, default form value (30) uses global default
     ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
-    background_tasks.add_task(
-        process_bulk_job, job_id, filepath, email_column, providers.split(","), strategy, ttl
-    )
+
+    # Try GitHub Actions first — falls back to BackgroundTasks if PAT not set
+    triggered = await _trigger_github_actions(job_id)
+    if not triggered:
+        background_tasks.add_task(
+            process_bulk_job, job_id, filepath, email_column, providers.split(","), strategy, ttl
+        )
+
     return BulkJobResponse(job_id=job_id, total=0, status="queued")
 
 
@@ -97,26 +131,43 @@ async def get_bulk_status(job_id: int):
 
 @router.get("/api/bulk/{job_id}/download")
 async def download_bulk(job_id: int, verdict: str = "all"):
-    upload_dir = _upload_dir()
-    output_path = os.path.join(upload_dir, f"results_{job_id}.csv")
-    if not os.path.exists(output_path):
-        raise HTTPException(status_code=404, detail="Results not ready")
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job or job.status != "done":
+            raise HTTPException(status_code=404, detail="Results not ready")
+        results = session.exec(
+            select(EmailResult).where(EmailResult.job_id == job_id)
+        ).all()
 
-    if verdict == "all":
-        return FileResponse(output_path, media_type="text/csv", filename=f"validated_{job_id}.csv")
+    if verdict != "all":
+        results = [r for r in results if r.verdict.lower() == verdict.lower()]
 
-    with open(output_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = [r for r in reader if r.get("verdict", "").lower() == verdict.lower()]
+    # Build column list from first result's provider_data
+    provider_cols: list[str] = []
+    if results:
+        try:
+            pd = json.loads(results[0].provider_data)
+            provider_cols = [f"{p}_status" for p in pd]
+        except Exception:
+            pass
 
+    fieldnames = ["email", "verdict"] + provider_cols + ["from_cache"]
     buf = io.StringIO()
-    if rows:
-        writer = csv.DictWriter(buf, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        row: dict = {"email": r.email, "verdict": r.verdict, "from_cache": False}
+        try:
+            pd = json.loads(r.provider_data)
+            for p, data in pd.items():
+                row[f"{p}_status"] = data.get("status", "")
+        except Exception:
+            pass
+        writer.writerow(row)
 
+    suffix = f"_{verdict}" if verdict != "all" else ""
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="validated_{job_id}_{verdict}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="validated_{job_id}{suffix}.csv"'},
     )

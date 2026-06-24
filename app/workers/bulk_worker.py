@@ -5,7 +5,7 @@ import os
 from sqlmodel import Session
 
 from app.core.cache import get_cached, parse_cached_providers, set_cache
-from app.core.csv_io import parse_csv_emails, write_results_csv
+from app.core.csv_io import parse_csv_emails
 from app.core.validator import validate
 from app.db import engine
 from app.models import EmailResult, Job
@@ -59,10 +59,6 @@ async def process_bulk_job(
         session.add(job)
         session.commit()
 
-    original_rows: list[dict] = []
-    all_results: list[dict] = []
-    email_col = email_column
-
     for i in range(0, len(rows), CHUNK_SIZE):
         chunk = rows[i : i + CHUNK_SIZE]
         tasks = [
@@ -74,26 +70,12 @@ async def process_bulk_job(
             for (row_idx, email, orig_row), (verdict, provider_results, from_cache) in zip(
                 chunk, verdicts
             ):
-                if not email_col and orig_row:
-                    for k, v in orig_row.items():
-                        if v.strip() == email:
-                            email_col = k
-                            break
-                original_rows.append(orig_row)
                 provider_data = {
                     name: (
                         res.model_dump() if hasattr(res, "model_dump") else res
                     )
                     for name, res in provider_results.items()
                 }
-                all_results.append(
-                    {
-                        "email": email,
-                        "verdict": verdict,
-                        "providers": provider_results,
-                        "from_cache": from_cache,
-                    }
-                )
                 er = EmailResult(
                     job_id=job_id,
                     email=email,
@@ -106,9 +88,6 @@ async def process_bulk_job(
                 job.processed = min(i + CHUNK_SIZE, len(rows))
                 session.add(job)
             session.commit()
-
-    output_path = os.path.join(_upload_dir(), f"results_{job_id}.csv")
-    write_results_csv(original_rows, email_col or "email", all_results, output_path)
 
     with Session(engine) as session:
         job = session.get(Job, job_id)

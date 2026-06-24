@@ -1,0 +1,35 @@
+name: Bulk Email Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID to process"
+        required: true
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Process job ${{ inputs.job_id }}
+        run: python scripts/process_job.py --job-id ${{ inputs.job_id }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BOUNCIFY_API_KEY: ${{ secrets.BOUNCIFY_API_KEY }}
+          ZEROBOUNCE_API_KEY: ${{ secrets.ZEROBOUNCE_API_KEY }}
+          NEVERBOUNCE_API_KEY: ${{ secrets.NEVERBOUNCE_API_KEY }}
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+          CACHE_TTL_DAYS: ${{ vars.CACHE_TTL_DAYS }}

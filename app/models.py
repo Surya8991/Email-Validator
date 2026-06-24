@@ -13,6 +13,7 @@ class Job(SQLModel, table=True):
     status: str = "queued"  # queued | running | done | failed
     filename: str | None = None
     error: str | None = None
+    csv_data: str = ""  # raw CSV content — read by GitHub Actions processor
 
 
 class EmailResult(SQLModel, table=True):
