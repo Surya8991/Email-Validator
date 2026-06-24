@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-7">
+
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Analytics</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Validation trends and quality breakdown</p>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    {% set vc = verdict_counts %}
+    {% set total = total_results | default(0) | int %}
+    {% set valid_pct = ((vc.get('valid',0) / total * 100) | round(1)) if total > 0 else 0 %}
+    {% set invalid_pct = ((vc.get('invalid',0) / total * 100) | round(1)) if total > 0 else 0 %}
+    <div class="card p-4">
+      <p class="text-xs text-gray-400 uppercase font-semibold tracking-wider">Valid</p>
+      <p class="text-3xl font-bold text-green-600 dark:text-green-400 mt-1">{{ valid_pct }}%</p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ vc.get('valid', 0) }} emails</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-gray-400 uppercase font-semibold tracking-wider">Invalid</p>
+      <p class="text-3xl font-bold text-red-600 dark:text-red-400 mt-1">{{ invalid_pct }}%</p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ vc.get('invalid', 0) }} emails</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-gray-400 uppercase font-semibold tracking-wider">Risky</p>
+      <p class="text-3xl font-bold text-yellow-600 dark:text-yellow-400 mt-1">{{ ((vc.get('risky',0) / total * 100) | round(1)) if total > 0 else 0 }}%</p>
+      <p class="text-xs text-gray-400 mt-0.5">{{ vc.get('risky', 0) }} emails</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-gray-400 uppercase font-semibold tracking-wider">Cache Entries</p>
+      <p class="text-3xl font-bold text-indigo-600 dark:text-indigo-400 mt-1">{{ total_cache | default(0) }}</p>
+      <p class="text-xs text-gray-400 mt-0.5">unique cached</p>
+    </div>
+  </div>
+
+  <!-- Charts grid -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+    <!-- Verdict pie -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-4">Verdict Distribution</h2>
+      <div class="flex justify-center">
+        <canvas id="verdict-pie" width="220" height="220"></canvas>
+      </div>
+    </div>
+
+    <!-- Daily trend -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-4">Daily Validations (last 14 days)</h2>
+      <canvas id="daily-line" height="220"></canvas>
+    </div>
+
+    <!-- Top invalid domains -->
+    <div class="card p-5 lg:col-span-2">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-4">Top Invalid Domains</h2>
+      <canvas id="domain-bar" height="120"></canvas>
+    </div>
+
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const DATA = {{ chart_data_json | safe }};
+
+const isDark = document.documentElement.classList.contains('dark');
+const textColor = isDark ? '#9ca3af' : '#6b7280';
+const gridColor = isDark ? '#1f2937' : '#f3f4f6';
+
+Chart.defaults.color = textColor;
+Chart.defaults.borderColor = gridColor;
+Chart.defaults.font.family = 'ui-sans-serif, system-ui, sans-serif';
+
+// Verdict pie
+const vc = DATA.verdict_counts;
+new Chart(document.getElementById('verdict-pie'), {
+  type: 'doughnut',
+  data: {
+    labels: Object.keys(vc),
+    datasets: [{
+      data: Object.values(vc),
+      backgroundColor: ['#22c55e','#ef4444','#eab308','#9ca3af'],
+      borderWidth: 2,
+      borderColor: isDark ? '#111827' : '#ffffff',
+    }]
+  },
+  options: {
+    cutout: '65%',
+    plugins: {
+      legend: { position: 'bottom', labels: { padding: 16, boxWidth: 12, color: textColor } }
+    }
+  }
+});
+
+// Daily line
+const daily = DATA.daily_stats;
+const labels = daily.map(d => d.date.slice(5)); // MM-DD
+new Chart(document.getElementById('daily-line'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'Valid', data: daily.map(d => d.valid || 0), borderColor: '#22c55e', backgroundColor: '#22c55e20', fill: true, tension: 0.3, pointRadius: 3 },
+      { label: 'Invalid', data: daily.map(d => d.invalid || 0), borderColor: '#ef4444', backgroundColor: '#ef444420', fill: true, tension: 0.3, pointRadius: 3 },
+      { label: 'Risky', data: daily.map(d => d.risky || 0), borderColor: '#eab308', backgroundColor: '#eab30820', fill: true, tension: 0.3, pointRadius: 3 },
+    ]
+  },
+  options: {
+    responsive: true,
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor } },
+      y: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, precision: 0 } }
+    },
+    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 14, color: textColor } } }
+  }
+});
+
+// Top domains bar
+const domains = DATA.top_domains;
+if (domains.length) {
+  new Chart(document.getElementById('domain-bar'), {
+    type: 'bar',
+    data: {
+      labels: domains.map(d => d.domain),
+      datasets: [{
+        label: 'Invalid count',
+        data: domains.map(d => d.count),
+        backgroundColor: '#ef444480',
+        borderColor: '#ef4444',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      scales: {
+        x: { beginAtZero: true, grid: { color: gridColor }, ticks: { color: textColor, precision: 0 } },
+        y: { grid: { display: false }, ticks: { color: textColor } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+} else {
+  document.getElementById('domain-bar').parentElement.innerHTML =
+    '<p class="text-sm text-gray-400 text-center py-6">No invalid domain data yet</p>';
+}
+</script>
+{% endblock %}

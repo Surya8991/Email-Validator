@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-7">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Overview of your email validation activity</p>
+  </div>
+
+  <!-- Stat cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="card p-4 space-y-1">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Validated</p>
+      <p class="text-3xl font-bold text-gray-900 dark:text-white">{{ total_results | default(0) | int }}</p>
+      <p class="text-xs text-gray-400">all time, across all jobs</p>
+    </div>
+    <div class="card p-4 space-y-1">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cache Entries</p>
+      <p class="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{{ total_cache | default(0) | int }}</p>
+      <p class="text-xs text-gray-400">unique emails cached (30d)</p>
+    </div>
+    <div class="card p-4 space-y-1">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cache Rate</p>
+      <p class="text-3xl font-bold text-green-600 dark:text-green-400">{{ cache_rate | default(0) }}%</p>
+      <p class="text-xs text-gray-400">approx. served from cache</p>
+    </div>
+    <div class="card p-4 space-y-1">
+      <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Providers</p>
+      <p class="text-3xl font-bold text-purple-600 dark:text-purple-400">{{ enabled_providers | length }}</p>
+      <p class="text-xs text-gray-400">active: {{ enabled_providers | join(', ') }}</p>
+    </div>
+  </div>
+
+  <!-- Verdict distribution + quick validate -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+    <!-- Verdict distribution -->
+    <div class="card p-5 space-y-3">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict Distribution</h2>
+      {% set total_v = (verdict_counts.get('valid',0) + verdict_counts.get('invalid',0) + verdict_counts.get('risky',0) + verdict_counts.get('unknown',0)) %}
+      {% if total_v > 0 %}
+      {% for v, color in [('valid','bg-green-500'),('invalid','bg-red-500'),('risky','bg-yellow-400'),('unknown','bg-gray-300 dark:bg-gray-600')] %}
+      {% set cnt = verdict_counts.get(v, 0) %}
+      {% set pct = (cnt / total_v * 100) | round(1) %}
+      <div>
+        <div class="flex justify-between text-xs mb-1">
+          <span class="font-medium text-gray-700 dark:text-gray-300 capitalize">{{ v }}</span>
+          <span class="text-gray-400">{{ cnt }} ({{ pct }}%)</span>
+        </div>
+        <div class="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+          <div class="h-full {{ color }} rounded-full transition-all" style="width: {{ pct }}%"></div>
+        </div>
+      </div>
+      {% endfor %}
+      {% else %}
+      <p class="text-sm text-gray-400">No validations yet. <a href="/validate" class="text-indigo-500 hover:underline">Validate an email →</a></p>
+      {% endif %}
+    </div>
+
+    <!-- Quick validate -->
+    <div class="card p-5 space-y-4">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Quick Validate</h2>
+      <form hx-post="/verify/htmx" hx-target="#dash-result" hx-swap="innerHTML" class="space-y-3">
+        <div class="flex gap-2">
+          <input name="email" type="email" placeholder="you@example.com" required
+            class="input-base flex-1"/>
+          <button type="submit" class="btn-primary whitespace-nowrap">Verify</button>
+        </div>
+        <input type="hidden" name="strategy" value="bouncify_only"/>
+        {% for p in enabled_providers %}
+        <input type="hidden" name="providers" value="{{ p }}"/>
+        {% endfor %}
+      </form>
+      <div id="dash-result"></div>
+      <a href="/validate" class="text-xs text-indigo-500 hover:underline block">Full validate with strategy options →</a>
+    </div>
+  </div>
+
+  <!-- Recent jobs -->
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Recent Bulk Jobs</h2>
+      <a href="/jobs" class="text-xs text-indigo-500 hover:underline">View all →</a>
+    </div>
+    {% if not recent_jobs %}
+    <p class="px-5 py-6 text-sm text-gray-400 text-center">No bulk jobs yet. <a href="/validate" class="text-indigo-500 hover:underline">Upload a CSV →</a></p>
+    {% else %}
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-gray-800/50">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">File</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Progress</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
+          <th class="px-4 py-2.5"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for job in recent_jobs %}
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+          <td class="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">#{{ job.id }}</td>
+          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-32 truncate">{{ job.filename or '—' }}</td>
+          <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ job.processed }}/{{ job.total }}</td>
+          <td class="px-4 py-3">
+            {% if job.status == 'done' %}<span class="badge-valid">done</span>
+            {% elif job.status == 'running' %}<span class="bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-xs px-2 py-0.5 rounded-full font-semibold">running</span>
+            {% elif job.status == 'failed' %}<span class="badge-invalid">failed</span>
+            {% else %}<span class="badge-unknown">{{ job.status }}</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-400">{{ job.created_at.strftime('%m-%d %H:%M') }}</td>
+          <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-indigo-500 hover:underline text-xs">View</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

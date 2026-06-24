@@ -1,0 +1,16 @@
+email,name,source,notes
+john.doe@example.com,John Doe,website,valid corporate domain
+jane.smith@outlook.com,Jane Smith,referral,valid free provider
+user@gmail.com,Gmail User,organic,valid free provider
+admin@company.io,Admin,manual,role-based address
+info@acmecorp.net,Info,newsletter,role-based address
+test@mailinator.com,Test User,signup,known disposable provider
+bounce@nonexistent-domain-xyz123.com,Bounce Test,import,no MX record - should be invalid
+noreply@example.org,No Reply,system,role-based address
+hello@10minutemail.com,Temp User,signup,disposable email provider
+sales@valid-company-demo.com,Sales,crm,corporate address
+support@guerrillamail.com,Support,ticket,disposable email provider
+contact@vercel.com,Contact,scrape,valid corporate domain
+developer@github.com,Developer,api,valid corporate domain
+notvalid@,Malformed,import,syntax error - no domain
+plainaddress,No At Sign,import,syntax error - missing @ symbol

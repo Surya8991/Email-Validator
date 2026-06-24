@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Cache Browser — Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-6">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Cache Browser</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">30-day result cache — browse, search, purge</p>
+    </div>
+    <button
+      hx-post="/api/cache/purge"
+      hx-target="#purge-result"
+      hx-swap="innerHTML"
+      hx-confirm="Delete all expired cache entries?"
+      class="btn-ghost border border-gray-200 dark:border-gray-700 text-red-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 dark:hover:bg-red-950/30">
+      🗑 Purge Expired
+    </button>
+  </div>
+
+  <div id="purge-result"></div>
+
+  <!-- Search -->
+  <div class="card p-4">
+    <input
+      type="search"
+      name="q"
+      placeholder="Search by email address…"
+      class="input-base w-full"
+      hx-get="/partials/cache-table"
+      hx-trigger="input changed delay:300ms, search"
+      hx-target="#cache-table"
+      hx-swap="innerHTML"
+      hx-include="[name='q']"
+    />
+  </div>
+
+  <!-- Table -->
+  <div class="card overflow-hidden">
+    <div id="cache-table"
+      hx-get="/partials/cache-table"
+      hx-trigger="load"
+      hx-swap="innerHTML">
+      <div class="p-8 text-center text-gray-400 text-sm">Loading…</div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

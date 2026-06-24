@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Job #{{ job.id }} — Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Header -->
+  <div class="flex items-center gap-3 flex-wrap">
+    <a href="/jobs" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm transition">← History</a>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Job #{{ job.id }}</h1>
+    {% if job.status == 'done' %}<span class="badge-valid">done</span>
+    {% elif job.status == 'running' %}<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs px-2 py-0.5 rounded-full font-semibold">running</span>
+    {% elif job.status == 'failed' %}<span class="badge-invalid">failed</span>
+    {% else %}<span class="badge-unknown">{{ job.status }}</span>{% endif %}
+    {% if job.filename %}
+    <span class="text-xs text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">{{ job.filename }}</span>
+    {% endif %}
+  </div>
+
+  <!-- Live progress -->
+  <div id="progress-block"
+    {% if job.status in ['queued','running'] %}
+    hx-get="/jobs/{{ job.id }}/status" hx-trigger="every 2s" hx-swap="outerHTML"
+    {% endif %}>
+    {% include "partials/job_progress.html" %}
+  </div>
+
+  <!-- Download + filter -->
+  {% if job.status == 'done' %}
+  <div class="flex flex-wrap gap-3 items-center">
+    <a href="/api/bulk/{{ job.id }}/download"
+      class="btn-primary inline-flex items-center gap-2">
+      ⬇ Download All
+    </a>
+    <a href="/api/bulk/{{ job.id }}/download?verdict=valid"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-green-200 dark:border-green-900 text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-950/30 transition">
+      ⬇ Valid only
+    </a>
+    <a href="/api/bulk/{{ job.id }}/download?verdict=invalid"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition">
+      ⬇ Invalid only
+    </a>
+    <a href="/api/bulk/{{ job.id }}/download?verdict=risky"
+      class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-yellow-200 dark:border-yellow-900 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/30 transition">
+      ⬇ Risky only
+    </a>
+  </div>
+  {% endif %}
+
+  <!-- Results preview -->
+  {% if results %}
+  <div class="card overflow-x-auto">
+    <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Results Preview</h2>
+      {% if job.total > 200 %}
+      <span class="text-xs text-gray-400">Showing first 200 of {{ job.total }} — download CSV for all</span>
+      {% endif %}
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
+        <tr>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Email</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Verdict</th>
+          <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Providers</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for r in results %}
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+          <td class="px-4 py-2.5 font-mono text-xs text-gray-700 dark:text-gray-300">{{ r.email }}</td>
+          <td class="px-4 py-2.5"><span class="badge-{{ r.verdict }}">{{ r.verdict }}</span></td>
+          <td class="px-4 py-2.5 text-xs text-gray-400 dark:text-gray-500">
+            {% for name, pdata in r.providers.items() %}
+            <span class="mr-2">{{ name }}: <strong class="text-gray-600 dark:text-gray-400">{{ pdata.get('status','?') if pdata is mapping else pdata.status }}</strong></span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

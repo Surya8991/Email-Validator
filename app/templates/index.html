@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-8">
+
+  <!-- Header -->
+  <div>
+    <h1 class="text-3xl font-bold text-gray-900">Email Validator</h1>
+    <p class="text-gray-500 mt-1">Single email or bulk CSV — multi-provider verification</p>
+  </div>
+
+  <!-- Provider status badges -->
+  <div class="flex flex-wrap gap-2">
+    {% for p in enabled_providers %}
+    <span class="bg-indigo-50 text-indigo-700 text-xs px-3 py-1 rounded-full border border-indigo-200 font-medium">✓ {{ p }}</span>
+    {% endfor %}
+  </div>
+
+  <!-- Tabs -->
+  <div x-data="{ tab: 'single' }" class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div class="flex border-b border-gray-200">
+      <button onclick="showTab('single')" id="tab-single"
+        class="tab-btn active px-6 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600">
+        Single Email
+      </button>
+      <button onclick="showTab('bulk')" id="tab-bulk"
+        class="tab-btn px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700 border-b-2 border-transparent">
+        Bulk CSV
+      </button>
+    </div>
+
+    <!-- Single Email Tab -->
+    <div id="pane-single" class="p-6">
+      <form hx-post="/verify/htmx" hx-target="#single-result" hx-swap="innerHTML"
+            class="space-y-4">
+        <div class="flex gap-3">
+          <input name="email" type="email" placeholder="you@example.com" required
+            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          <button type="submit"
+            class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+            Verify
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-xs font-medium text-gray-600 mb-1 block">Strategy</label>
+            <select name="strategy" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              <option value="bouncify_only">Bouncify Only</option>
+              <option value="local_first">Local First (save credits)</option>
+              <option value="consensus">Consensus (all providers)</option>
+              <option value="waterfall">Waterfall (stop at confident)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-600 mb-1 block">Providers</label>
+            <div class="flex flex-wrap gap-2 mt-1">
+              {% for p in enabled_providers %}
+              <label class="flex items-center gap-1 text-sm cursor-pointer">
+                <input type="checkbox" name="providers" value="{{ p }}"
+                  {% if p == 'bouncify' or p == 'local' %}checked{% endif %}
+                  class="rounded accent-indigo-600"/>
+                {{ p }}
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <div id="single-result" class="mt-4"></div>
+    </div>
+
+    <!-- Bulk CSV Tab -->
+    <div id="pane-bulk" class="p-6 hidden">
+      <form action="/api/bulk" method="post" enctype="multipart/form-data" class="space-y-4"
+            onsubmit="handleBulkSubmit(event)">
+        <div class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-indigo-400 transition cursor-pointer"
+             onclick="document.getElementById('csv-file').click()">
+          <div class="text-4xl mb-2">📂</div>
+          <p class="text-sm text-gray-600">Drop CSV here or <span class="text-indigo-600 font-medium">browse</span></p>
+          <p class="text-xs text-gray-400 mt-1">First column or column named "email" is auto-detected</p>
+          <input id="csv-file" name="file" type="file" accept=".csv" required class="hidden"
+                 onchange="document.getElementById('file-label').textContent = this.files[0].name"/>
+          <p id="file-label" class="text-sm text-indigo-600 mt-2 font-medium"></p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-xs font-medium text-gray-600 mb-1 block">Email Column (optional)</label>
+            <input name="email_column" placeholder="auto-detect" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"/>
+          </div>
+          <div>
+            <label class="text-xs font-medium text-gray-600 mb-1 block">Strategy</label>
+            <select name="strategy" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              <option value="bouncify_only">Bouncify Only</option>
+              <option value="local_first">Local First</option>
+              <option value="consensus">Consensus</option>
+              <option value="waterfall">Waterfall</option>
+            </select>
+          </div>
+        </div>
+        <input type="hidden" name="providers" value="bouncify,local"/>
+        <button type="submit"
+          class="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition w-full">
+          Start Bulk Validation
+        </button>
+      </form>
+      <div id="bulk-result" class="mt-4"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function showTab(tab) {
+  ['single','bulk'].forEach(t => {
+    document.getElementById('pane-'+t).classList.toggle('hidden', t !== tab);
+    const btn = document.getElementById('tab-'+t);
+    btn.classList.toggle('text-indigo-600', t === tab);
+    btn.classList.toggle('border-indigo-600', t === tab);
+    btn.classList.toggle('text-gray-500', t !== tab);
+    btn.classList.toggle('border-transparent', t !== tab);
+  });
+}
+
+async function handleBulkSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = new FormData(form);
+  const res = await fetch('/api/bulk', {method:'POST', body: data});
+  const json = await res.json();
+  document.getElementById('bulk-result').innerHTML =
+    `<div class="p-4 bg-indigo-50 border border-indigo-200 rounded-lg text-sm">
+      Job <strong>#${json.job_id}</strong> queued.
+      <a href="/jobs/${json.job_id}" class="ml-2 text-indigo-600 font-medium underline">Track progress →</a>
+    </div>`;
+}
+</script>
+{% endblock %}

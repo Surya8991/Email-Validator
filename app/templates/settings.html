@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Settings — Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-7">
+
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">API keys, cache configuration, and provider status</p>
+  </div>
+
+  <!-- Provider API Keys -->
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Provider API Keys</h2>
+      <p class="text-xs text-gray-400 mt-0.5">Keys are loaded from your <code class="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-xs">.env</code> file. Restart the server after changes.</p>
+    </div>
+    <div class="divide-y divide-gray-100 dark:divide-gray-800">
+      {% for p in provider_cfg %}
+      <div class="px-5 py-4 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0 {{ 'bg-green-400' if p.configured else 'bg-gray-300 dark:bg-gray-600' }}"></span>
+          <div>
+            <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ p.name }}</p>
+            <p class="text-xs text-gray-400 font-mono">{{ p.env }}</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          {% if p.configured %}
+          <span class="text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-1 rounded-lg font-medium">✓ Configured</span>
+          {% if p.daily_cap > 0 %}
+          <span class="text-xs text-gray-400">cap: {{ p.daily_cap }}/day</span>
+          {% endif %}
+          {% else %}
+          <span class="text-xs bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-1 rounded-lg">Not set</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800">
+      <p class="text-xs text-gray-400">
+        To add a key: set <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">PROVIDER_API_KEY=your_key</code> in <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">.env</code>, then restart uvicorn.
+      </p>
+    </div>
+  </div>
+
+  <!-- Cache Settings -->
+  <div class="card overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Cache Configuration</h2>
+    </div>
+    <div class="px-5 py-4 space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Cache TTL</p>
+          <p class="text-xs text-gray-400">How long validated results are kept. Env: <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">CACHE_TTL_DAYS</code></p>
+        </div>
+        <span class="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{{ cache_ttl_days }}d</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">Cached Entries</p>
+          <p class="text-xs text-gray-400">Unique emails currently in cache (active + expired)</p>
+        </div>
+        <span class="text-2xl font-bold text-gray-700 dark:text-gray-300">{{ total_cache }}</span>
+      </div>
+    </div>
+    <div class="px-5 py-4 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
+      <div>
+        <p class="text-sm text-gray-600 dark:text-gray-300">Purge all expired entries</p>
+        <p class="text-xs text-gray-400">Frees space by removing entries past their TTL</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <div id="purge-msg"></div>
+        <button
+          hx-post="/api/cache/purge"
+          hx-target="#purge-msg"
+          hx-swap="innerHTML"
+          hx-on::after-request="setTimeout(()=>document.getElementById('purge-msg').innerHTML='',3000)"
+          class="btn-ghost border border-red-200 dark:border-red-900 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30">
+          🗑 Purge Expired
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SMTP Probe -->
+  <div class="card px-5 py-4 flex items-center justify-between">
+    <div>
+      <p class="text-sm font-medium text-gray-800 dark:text-gray-100">SMTP Probe</p>
+      <p class="text-xs text-gray-400 mt-0.5">Deep RCPT TO check on local provider. Requires port 25. Env: <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">ENABLE_SMTP_PROBE</code></p>
+    </div>
+    <span class="text-xs font-semibold px-3 py-1.5 rounded-lg
+      {{ 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' if smtp_probe else 'bg-gray-100 dark:bg-gray-800 text-gray-500' }}">
+      {{ 'Enabled' if smtp_probe else 'Disabled' }}
+    </span>
+  </div>
+
+  <!-- Domain Reputation API -->
+  <div class="card p-5 space-y-3">
+    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Domain Reputation Lookup</h2>
+    <p class="text-xs text-gray-400">Query validation history for a domain across cached results.</p>
+    <div class="flex gap-2">
+      <input id="domain-input" type="text" placeholder="gmail.com" class="input-base flex-1"/>
+      <button onclick="lookupDomain()" class="btn-primary">Look up</button>
+    </div>
+    <div id="domain-result"></div>
+  </div>
+
+</div>
+
+<script>
+// Purge result formatter
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.target.id === 'purge-msg') {
+    try {
+      const data = JSON.parse(e.target.textContent);
+      if (data.purged !== undefined) {
+        e.target.innerHTML = `<span class="text-xs text-green-600 dark:text-green-400 font-medium">✓ Purged ${data.purged} entries</span>`;
+      }
+    } catch {}
+  }
+});
+
+async function lookupDomain() {
+  const domain = document.getElementById('domain-input').value.trim();
+  if (!domain) return;
+  const res = await fetch(`/api/domain/${encodeURIComponent(domain)}`);
+  const data = await res.json();
+  const repColor = {good: 'text-green-600 dark:text-green-400', bad: 'text-red-600 dark:text-red-400', mixed: 'text-yellow-600 dark:text-yellow-400', unknown: 'text-gray-500'}[data.reputation] || 'text-gray-500';
+  const counts = Object.entries(data.verdict_counts).map(([k,v]) => `<span class="badge-${k} mr-1">${k}: ${v}</span>`).join('');
+  document.getElementById('domain-result').innerHTML = `
+    <div class="p-4 card mt-2">
+      <div class="flex items-center gap-3 mb-2">
+        <span class="font-mono font-semibold text-gray-800 dark:text-gray-100">${data.domain}</span>
+        <span class="text-sm font-bold capitalize ${repColor}">${data.reputation}</span>
+        <span class="text-xs text-gray-400">${data.total_checked} checked</span>
+      </div>
+      <div>${counts || '<span class="text-xs text-gray-400">No data</span>'}</div>
+    </div>`;
+}
+</script>
+{% endblock %}
