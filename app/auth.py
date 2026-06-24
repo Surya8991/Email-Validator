@@ -1,7 +1,6 @@
 import hashlib
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import Depends, Request
 from sqlmodel import Session, select
@@ -47,7 +46,7 @@ def delete_user_session(token: str, db: Session) -> None:
         db.commit()
 
 
-def get_current_user(request: Request, db: Session = Depends(get_session)) -> Optional[User]:
+def get_current_user(request: Request, db: Session = Depends(get_session)) -> User | None:
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
@@ -72,6 +71,12 @@ def require_auth(request: Request, db: Session = Depends(get_session)) -> User:
 
 
 def require_admin(user: User = Depends(require_auth)) -> User:
-    if user.role != "admin":
+    if user.role not in ("admin", "superadmin"):
+        raise RequiresAdmin()
+    return user
+
+
+def require_superadmin(user: User = Depends(require_auth)) -> User:
+    if user.role != "superadmin":
         raise RequiresAdmin()
     return user

@@ -1,19 +1,19 @@
 import json
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
+import bcrypt
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-import bcrypt
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.auth import require_admin
+from app.auth import require_admin, require_superadmin
 from app.config import settings
 from app.db import engine, is_postgres
-from app.models import ApiUsage, EmailCache, EmailResult, Job, User
+from app.models import ApiUsage, EmailCache, EmailResult, Job, Team, TeamMembership, User
 from app.providers.registry import get_enabled_providers
 
 router = APIRouter(prefix="/admin")
@@ -190,14 +190,170 @@ async def admin_usage(request: Request, current_user: User = Depends(require_adm
 
 @router.get("/providers", response_class=HTMLResponse)
 async def admin_providers(request: Request, current_user: User = Depends(require_admin)):
+    def _p(name: str, env: str, key: str, cap: int) -> dict:
+        return {"name": name, "env": env, "configured": bool(key), "daily_cap": cap}
+
+    s = settings
     provider_cfg = [
-        {"name": "Bouncify", "env": "BOUNCIFY_API_KEY", "configured": bool(settings.bouncify_api_key), "daily_cap": settings.bouncify_daily_cap},
-        {"name": "ZeroBounce", "env": "ZEROBOUNCE_API_KEY", "configured": bool(settings.zerobounce_api_key), "daily_cap": settings.zerobounce_daily_cap},
-        {"name": "NeverBounce", "env": "NEVERBOUNCE_API_KEY", "configured": bool(settings.neverbounce_api_key), "daily_cap": settings.neverbounce_daily_cap},
-        {"name": "Hunter.io", "env": "HUNTER_API_KEY", "configured": bool(settings.hunter_api_key), "daily_cap": settings.hunter_daily_cap},
+        _p("Bouncify", "BOUNCIFY_API_KEY", s.bouncify_api_key, s.bouncify_daily_cap),
+        _p("ZeroBounce", "ZEROBOUNCE_API_KEY", s.zerobounce_api_key, s.zerobounce_daily_cap),
+        _p("NeverBounce", "NEVERBOUNCE_API_KEY", s.neverbounce_api_key, s.neverbounce_daily_cap),
+        _p("Hunter.io", "HUNTER_API_KEY", s.hunter_api_key, s.hunter_daily_cap),
     ]
     return templates.TemplateResponse(request, "admin/providers.html", {
         **_admin_ctx("providers", current_user),
         "provider_cfg": provider_cfg,
         "enabled_providers": get_enabled_providers(),
     })
+
+
+# ── Superadmin: user role promotion ──────────────────────────────────────────
+
+@router.post("/users/{user_id}/promote")
+async def admin_promote_user(user_id: int, current_user: User = Depends(require_superadmin)):
+    with Session(engine) as db:
+        user = db.get(User, user_id)
+        if user and user.role == "user":
+            user.role = "admin"
+            db.commit()
+    return RedirectResponse(url="/admin/users", status_code=302)
+
+
+@router.post("/users/{user_id}/demote")
+async def admin_demote_user(user_id: int, current_user: User = Depends(require_superadmin)):
+    with Session(engine) as db:
+        user = db.get(User, user_id)
+        if user and user.id != current_user.id and user.role == "admin":
+            user.role = "user"
+            db.commit()
+    return RedirectResponse(url="/admin/users", status_code=302)
+
+
+# ── Teams ─────────────────────────────────────────────────────────────────────
+
+@router.get("/teams", response_class=HTMLResponse)
+async def admin_teams(request: Request, current_user: User = Depends(require_admin)):
+    with Session(engine) as db:
+        teams = db.exec(select(Team).order_by(Team.name)).all()  # type: ignore[arg-type]
+        # pending requests count per team
+        pending: dict[int, int] = {}
+        member_count: dict[int, int] = {}
+        for t in teams:
+            if t.id is None:
+                continue
+            pending[t.id] = db.exec(
+                select(func.count()).select_from(TeamMembership)
+                .where(TeamMembership.team_id == t.id, TeamMembership.status == "pending")
+            ).one() or 0
+            member_count[t.id] = db.exec(
+                select(func.count()).select_from(TeamMembership)
+                .where(TeamMembership.team_id == t.id, TeamMembership.status == "active")
+            ).one() or 0
+    return templates.TemplateResponse(request, "admin/teams.html", {
+        **_admin_ctx("teams", current_user),
+        "teams": teams,
+        "pending": pending,
+        "member_count": member_count,
+    })
+
+
+@router.post("/teams")
+async def admin_create_team(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    current_user: User = Depends(require_admin),
+):
+    name = name.strip()
+    if not name:
+        return RedirectResponse(url="/admin/teams", status_code=302)
+    with Session(engine) as db:
+        existing = db.exec(select(Team).where(Team.name == name)).first()
+        if not existing:
+            db.add(Team(name=name, description=description.strip(), created_by=current_user.id))
+            db.commit()
+    return RedirectResponse(url="/admin/teams", status_code=302)
+
+
+@router.get("/teams/{team_id}", response_class=HTMLResponse)
+async def admin_team_detail(
+    request: Request, team_id: int, current_user: User = Depends(require_admin)
+):
+    with Session(engine) as db:
+        team = db.get(Team, team_id)
+        if not team:
+            return HTMLResponse("Team not found", status_code=404)
+        members_rows = db.exec(
+            select(TeamMembership, User)
+            .where(TeamMembership.team_id == team_id, TeamMembership.status == "active")
+            .join(User, User.id == TeamMembership.user_id)  # type: ignore[arg-type]
+        ).all()
+        pending_rows = db.exec(
+            select(TeamMembership, User)
+            .where(TeamMembership.team_id == team_id, TeamMembership.status == "pending")
+            .join(User, User.id == TeamMembership.user_id)  # type: ignore[arg-type]
+        ).all()
+        members = [{"membership": m, "user": u} for m, u in members_rows]
+        pending = [{"membership": m, "user": u} for m, u in pending_rows]
+    return templates.TemplateResponse(request, "admin/team_detail.html", {
+        **_admin_ctx("teams", current_user),
+        "team": team,
+        "members": members,
+        "pending": pending,
+    })
+
+
+@router.post("/teams/{team_id}/approve/{membership_id}")
+async def admin_approve_membership(
+    team_id: int, membership_id: int, current_user: User = Depends(require_admin)
+):
+    with Session(engine) as db:
+        m = db.get(TeamMembership, membership_id)
+        if m and m.team_id == team_id and m.status == "pending":
+            m.status = "active"
+            m.approved_at = datetime.utcnow()
+            m.approved_by = current_user.id
+            db.commit()
+    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+
+
+@router.post("/teams/{team_id}/reject/{membership_id}")
+async def admin_reject_membership(
+    team_id: int, membership_id: int, current_user: User = Depends(require_admin)
+):
+    with Session(engine) as db:
+        m = db.get(TeamMembership, membership_id)
+        if m and m.team_id == team_id and m.status == "pending":
+            m.status = "rejected"
+            db.commit()
+    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+
+
+@router.post("/teams/{team_id}/remove/{user_id}")
+async def admin_remove_member(
+    team_id: int, user_id: int, current_user: User = Depends(require_admin)
+):
+    with Session(engine) as db:
+        m = db.exec(
+            select(TeamMembership)
+            .where(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
+        ).first()
+        if m:
+            db.delete(m)
+            db.commit()
+    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+
+
+@router.post("/teams/{team_id}/delete")
+async def admin_delete_team(team_id: int, current_user: User = Depends(require_admin)):
+    with Session(engine) as db:
+        team = db.get(Team, team_id)
+        if team:
+            memberships = db.exec(
+                select(TeamMembership).where(TeamMembership.team_id == team_id)
+            ).all()
+            for m in memberships:
+                db.delete(m)
+            db.delete(team)
+            db.commit()
+    return RedirectResponse(url="/admin/teams", status_code=302)

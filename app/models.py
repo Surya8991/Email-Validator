@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
@@ -7,7 +6,7 @@ from sqlmodel import Field, SQLModel
 class Job(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    user_id: int | None = Field(default=None, foreign_key="user.id")
     strategy: str = "bouncify_only"
     providers: str = "bouncify"  # comma-separated
     total: int = 0
@@ -52,7 +51,7 @@ class User(SQLModel, table=True):
     role: str = Field(default="user")  # "admin" | "user"
     is_active: bool = Field(default=False)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_login: Optional[datetime] = None
+    last_login: datetime | None = None
 
 
 class UserSession(SQLModel, table=True):
@@ -61,3 +60,21 @@ class UserSession(SQLModel, table=True):
     token_hash: str = Field(index=True)
     expires_at: datetime
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Team(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    description: str = Field(default="")
+    created_by: int | None = Field(default=None, foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TeamMembership(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    team_id: int = Field(foreign_key="team.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    status: str = Field(default="pending")  # "pending" | "active" | "rejected"
+    requested_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_at: datetime | None = None
+    approved_by: int | None = Field(default=None, foreign_key="user.id")

@@ -11,8 +11,8 @@ from app.auth import RequiresAdmin, RequiresAuth
 from app.config import settings
 from app.db import create_db_tables
 from app.providers import registry
-from app.routes import api_bulk, api_single, api_stats, auth_routes, health, ui
 from app.routes import admin as admin_router
+from app.routes import api_bulk, api_single, api_stats, auth_routes, health, ui
 
 _BASE_DIR = Path(__file__).parent.parent
 _STATIC_DIR = _BASE_DIR / "static"
@@ -20,23 +20,47 @@ _SAMPLES_DIR = _BASE_DIR / "samples"
 
 
 def _bootstrap_admin() -> None:
-    if not settings.admin_email or not settings.admin_password:
-        return
     import bcrypt
     from sqlmodel import Session, select
+
     from app.db import engine
     from app.models import User
+
     with Session(engine) as db:
-        if db.exec(select(User)).first():
-            return
-        pw_hash = bcrypt.hashpw(settings.admin_password.encode(), bcrypt.gensalt(rounds=12)).decode()
-        db.add(User(
-            email=settings.admin_email.strip().lower(),
-            password_hash=pw_hash,
-            role="admin",
-            is_active=True,
-        ))
-        db.commit()
+        # Create first admin if table is empty
+        if settings.admin_email and settings.admin_password:
+            if not db.exec(select(User)).first():
+                pw_hash = bcrypt.hashpw(
+                    settings.admin_password.encode(), bcrypt.gensalt(rounds=12)
+                ).decode()
+                db.add(User(
+                    email=settings.admin_email.strip().lower(),
+                    password_hash=pw_hash,
+                    role="admin",
+                    is_active=True,
+                ))
+                db.commit()
+
+        # Promote/create superadmin on every startup
+        if settings.superadmin_email:
+            sa_email = settings.superadmin_email.strip().lower()
+            user = db.exec(select(User).where(User.email == sa_email)).first()
+            if user:
+                if user.role != "superadmin":
+                    user.role = "superadmin"
+                    user.is_active = True
+                    db.commit()
+            elif settings.admin_password:
+                pw_hash = bcrypt.hashpw(
+                    settings.admin_password.encode(), bcrypt.gensalt(rounds=12)
+                ).decode()
+                db.add(User(
+                    email=sa_email,
+                    password_hash=pw_hash,
+                    role="superadmin",
+                    is_active=True,
+                ))
+                db.commit()
 
 
 @asynccontextmanager

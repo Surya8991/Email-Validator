@@ -1,0 +1,90 @@
+{% extends "admin/base.html" %}
+{% block title %}Teams{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Teams</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Create and manage teams. Users request to join; admins approve.</p>
+    </div>
+    <button onclick="document.getElementById('create-modal').classList.remove('hidden')"
+      class="btn-primary flex items-center gap-2">
+      + Create Team
+    </button>
+  </div>
+
+  {% if not teams %}
+  <div class="card p-12 text-center">
+    <div class="text-5xl mb-3">👥</div>
+    <p class="text-gray-500 dark:text-gray-400">No teams yet. Create one to get started.</p>
+  </div>
+  {% else %}
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for team in teams %}
+    <div class="card p-5 flex flex-col gap-3">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <a href="/admin/teams/{{ team.id }}" class="font-semibold text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 transition">
+            {{ team.name }}
+          </a>
+          {% if team.description %}
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ team.description }}</div>
+          {% endif %}
+        </div>
+        {% if pending.get(team.id, 0) > 0 %}
+        <span class="shrink-0 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-xs font-bold px-2 py-0.5 rounded-full">
+          {{ pending.get(team.id) }} pending
+        </span>
+        {% endif %}
+      </div>
+
+      <div class="text-xs text-gray-500 dark:text-gray-400">
+        {{ member_count.get(team.id, 0) }} active member{{ 's' if member_count.get(team.id, 0) != 1 else '' }}
+      </div>
+
+      <div class="mt-auto flex items-center justify-between">
+        <a href="/admin/teams/{{ team.id }}"
+          class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium">
+          Manage →
+        </a>
+        <form method="post" action="/admin/teams/{{ team.id }}/delete"
+          onsubmit="return confirm('Delete team {{ team.name }}? This removes all memberships.')">
+          <button type="submit" class="text-xs text-red-500 hover:underline font-medium">Delete</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Create team modal -->
+<div id="create-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="text-lg font-bold text-gray-900 dark:text-white">Create Team</h2>
+      <button onclick="document.getElementById('create-modal').classList.add('hidden')"
+        class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xl leading-none">✕</button>
+    </div>
+    <form method="post" action="/admin/teams" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Team name</label>
+        <input type="text" name="name" required class="input-base w-full" placeholder="e.g. Marketing, Engineering"/>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Description <span class="text-gray-400 font-normal">(optional)</span></label>
+        <input type="text" name="description" class="input-base w-full" placeholder="What does this team do?"/>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button type="submit" class="btn-primary flex-1">Create</button>
+        <button type="button" onclick="document.getElementById('create-modal').classList.add('hidden')"
+          class="flex-1 border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

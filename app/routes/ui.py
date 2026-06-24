@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlmodel import Session, select
@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from app.auth import require_auth
 from app.config import settings
 from app.db import engine, is_postgres
-from app.models import EmailCache, EmailResult, Job, User
+from app.models import EmailCache, EmailResult, Job, Team, TeamMembership, User
 from app.providers.registry import get_enabled_providers
 
 router = APIRouter()
@@ -272,3 +272,60 @@ async def job_status_partial(request: Request, job_id: int):
     return templates.TemplateResponse(
         request, "partials/job_progress.html", {"job": job, "pct": pct}
     )
+
+
+@router.get("/teams", response_class=HTMLResponse)
+async def teams_page(request: Request, current_user: User = Depends(require_auth)):
+    with Session(engine) as db:
+        teams = db.exec(select(Team).order_by(Team.name)).all()  # type: ignore[arg-type]
+        my_memberships: dict[int, str] = {}
+        if current_user.id:
+            rows = db.exec(
+                select(TeamMembership).where(TeamMembership.user_id == current_user.id)
+            ).all()
+            my_memberships = {m.team_id: m.status for m in rows}
+        member_counts: dict[int, int] = {}
+        for t in teams:
+            if t.id is None:
+                continue
+            member_counts[t.id] = db.exec(
+                select(func.count()).select_from(TeamMembership)
+                .where(TeamMembership.team_id == t.id, TeamMembership.status == "active")
+            ).one() or 0
+    return templates.TemplateResponse(request, "teams.html", {
+        "active_page": "teams",
+        "current_user": current_user,
+        "teams": teams,
+        "my_memberships": my_memberships,
+        "member_counts": member_counts,
+    })
+
+
+@router.post("/teams/{team_id}/request")
+async def request_team_join(team_id: int, current_user: User = Depends(require_auth)):
+    with Session(engine) as db:
+        team = db.get(Team, team_id)
+        if not team:
+            return RedirectResponse(url="/teams", status_code=302)
+        existing = db.exec(
+            select(TeamMembership)
+            .where(TeamMembership.team_id == team_id, TeamMembership.user_id == current_user.id)
+        ).first()
+        if not existing:
+            db.add(TeamMembership(team_id=team_id, user_id=current_user.id, status="pending"))
+            db.commit()
+    return RedirectResponse(url="/teams", status_code=302)
+
+
+@router.post("/teams/{team_id}/cancel")
+async def cancel_team_request(team_id: int, current_user: User = Depends(require_auth)):
+    with Session(engine) as db:
+        m = db.exec(
+            select(TeamMembership)
+            .where(TeamMembership.team_id == team_id, TeamMembership.user_id == current_user.id,
+                   TeamMembership.status == "pending")
+        ).first()
+        if m:
+            db.delete(m)
+            db.commit()
+    return RedirectResponse(url="/teams", status_code=302)

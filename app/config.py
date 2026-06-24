@@ -47,5 +47,9 @@ class Settings(BaseSettings):
     admin_email: str = ""
     admin_password: str = ""
 
+    # Superadmin — sets this user's role to superadmin on every startup
+    # Can be an existing user or will be created (requires admin_password)
+    superadmin_email: str = ""
+
 
 settings = Settings()

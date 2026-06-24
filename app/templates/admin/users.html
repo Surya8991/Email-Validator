@@ -84,6 +84,17 @@
                 <button type="submit" class="text-xs text-green-600 dark:text-green-400 hover:underline font-medium">Activate</button>
               </form>
               {% endif %}
+              {% if current_user.role == 'superadmin' and u.id != current_user.id %}
+                {% if u.role == 'user' %}
+                <form method="post" action="/admin/users/{{ u.id }}/promote">
+                  <button type="submit" class="text-xs text-indigo-500 hover:underline font-medium">Make Admin</button>
+                </form>
+                {% elif u.role == 'admin' %}
+                <form method="post" action="/admin/users/{{ u.id }}/demote">
+                  <button type="submit" class="text-xs text-gray-400 hover:underline font-medium">Remove Admin</button>
+                </form>
+                {% endif %}
+              {% endif %}
               {% if u.id != current_user.id %}
               <form method="post" action="/admin/users/{{ u.id }}/deactivate">
                 <button type="submit" class="text-xs text-red-500 hover:underline font-medium">

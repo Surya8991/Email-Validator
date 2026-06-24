@@ -25,7 +25,7 @@ echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # ── 1. Tests ──────────────────────────────────────────────────────────────────
-echo -e "${BOLD}[1/7] Tests${RESET}"
+echo -e "${BOLD}[1/8] Tests${RESET}"
 if python -m pytest -q --tb=short 2>&1; then
   ok "All tests passed"
 else
@@ -34,7 +34,7 @@ fi
 echo ""
 
 # ── 2. Lint ───────────────────────────────────────────────────────────────────
-echo -e "${BOLD}[2/7] Lint${RESET}"
+echo -e "${BOLD}[2/8] Lint${RESET}"
 if python -m ruff check . 2>&1; then
   ok "ruff: no errors"
 else
@@ -43,7 +43,7 @@ fi
 echo ""
 
 # ── 3. Secrets & .env ─────────────────────────────────────────────────────────
-echo -e "${BOLD}[3/7] Secrets & .env${RESET}"
+echo -e "${BOLD}[3/8] Secrets & .env${RESET}"
 
 if git ls-files --error-unmatch .env > /dev/null 2>&1; then
   fail ".env IS tracked by git — remove: git rm --cached .env"
@@ -72,7 +72,7 @@ fi
 echo ""
 
 # ── 4. Vercel deployment ──────────────────────────────────────────────────────
-echo -e "${BOLD}[4/7] Vercel deployment${RESET}"
+echo -e "${BOLD}[4/8] Vercel deployment${RESET}"
 
 if [ -f vercel.json ]; then
   if python -c "import json, sys; json.load(open('vercel.json'))" 2>/dev/null; then
@@ -173,7 +173,7 @@ fi
 echo ""
 
 # ── 5. GitHub Actions ─────────────────────────────────────────────────────────
-echo -e "${BOLD}[5/7] GitHub Actions${RESET}"
+echo -e "${BOLD}[5/8] GitHub Actions${RESET}"
 
 if [ -f .github/workflows/bulk_process.yml ]; then
   ok ".github/workflows/bulk_process.yml present"
@@ -199,7 +199,7 @@ fi
 echo ""
 
 # ── 6. Debug debris ───────────────────────────────────────────────────────────
-echo -e "${BOLD}[6/7] Debug debris${RESET}"
+echo -e "${BOLD}[6/8] Debug debris${RESET}"
 
 PRINTS=$(grep -rn "^\s*print(" app/ --include="*.py" 2>/dev/null | grep -v "# noqa" | wc -l | tr -d ' ')
 if [ "${PRINTS:-0}" -gt 0 ]; then
@@ -218,7 +218,7 @@ fi
 echo ""
 
 # ── 7. Critical files ─────────────────────────────────────────────────────────
-echo -e "${BOLD}[7/7] Critical files${RESET}"
+echo -e "${BOLD}[7/8] Critical files${RESET}"
 MISSING=0
 for f in \
   app/main.py app/config.py app/db.py app/models.py app/schemas.py \
@@ -234,6 +234,63 @@ done
 if [ "$MISSING" -eq 0 ]; then
   ok "All critical files present"
 fi
+echo ""
+
+# ── 8. Auth ───────────────────────────────────────────────────────────────────
+echo -e "${BOLD}[8/8] Auth${RESET}"
+
+for f in app/auth.py app/routes/auth_routes.py app/routes/admin.py; do
+  if [ -f "$f" ]; then
+    ok "$f exists"
+  else
+    fail "Missing auth file: $f"
+  fi
+done
+
+for t in app/templates/auth/login.html app/templates/auth/register.html \
+          app/templates/admin/base.html app/templates/admin/users.html \
+          app/templates/admin/stats.html app/templates/teams.html; do
+  if [ -f "$t" ]; then
+    ok "$t exists"
+  else
+    fail "Missing auth template: $t"
+  fi
+done
+
+# Ensure SESSION_COOKIE constant isn't pointing to a dev-only value accidentally committed
+if grep -q 'SESSION_COOKIE\s*=\s*"ev_session"' app/auth.py 2>/dev/null; then
+  ok "SESSION_COOKIE is set correctly (ev_session)"
+else
+  warn "SESSION_COOKIE may be misconfigured in app/auth.py"
+fi
+
+# Warn if SECRET_KEY default is used in a production context
+if grep -q 'production.*True\|PRODUCTION.*true' .env 2>/dev/null; then
+  if grep -q 'dev-secret-change-me' .env 2>/dev/null; then
+    fail "PRODUCTION=true but SECRET_KEY is still the default placeholder — set a real secret"
+  else
+    ok "SECRET_KEY is not the default placeholder in production .env"
+  fi
+else
+  ok "Not a production .env (SECRET_KEY check skipped)"
+fi
+
+# Check bcrypt is listed (not passlib) — passlib incompatible with bcrypt>=5
+if grep -qi "^bcrypt" requirements.txt 2>/dev/null; then
+  ok "requirements.txt uses bcrypt directly (passlib-free)"
+elif grep -qi "passlib" requirements.txt 2>/dev/null; then
+  fail "requirements.txt uses passlib — incompatible with bcrypt>=5. Replace with bcrypt>=4.0.0"
+else
+  fail "requirements.txt missing bcrypt"
+fi
+
+# No raw tokens in DB — session tokens must be hashed
+if grep -n 'token_hash\|sha256' app/auth.py 2>/dev/null | grep -q .; then
+  ok "Session tokens are hashed (SHA-256) before DB storage"
+else
+  fail "app/auth.py may store raw tokens — check token_hash + hashlib usage"
+fi
+
 echo ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────

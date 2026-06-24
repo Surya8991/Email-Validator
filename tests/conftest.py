@@ -50,6 +50,7 @@ def mock_hunter():
 def auth_client(patch_db):
     import bcrypt
     from sqlmodel import Session
+
     from app.main import app
     from app.models import User
 
