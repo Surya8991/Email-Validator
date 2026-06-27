@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # GitHub Actions bulk processing
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs
     github_pat: str = ""
-    github_repo: str = "Layruss98266/Email-Validator"  # owner/repo
+    github_repo: str = "Surya8991/Email-Validator"  # owner/repo
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000
