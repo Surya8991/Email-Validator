@@ -48,6 +48,25 @@ async def _validate_with_cache(
     return verdict, provider_results, False
 
 
+def _mark_failed(job_id: int, error: str) -> None:
+    """Best-effort: mark a job 'failed' with a short error message.
+
+    Used by the top-level handler so a crashed worker never leaves the UI
+    polling a phantom 'running' row. Swallows its own exceptions — if even
+    this write fails, we still want the original error to surface.
+    """
+    try:
+        with Session(engine) as session:
+            job = session.get(Job, job_id)
+            if job:
+                job.status = "failed"
+                job.error = error[:500]
+                session.add(job)
+                session.commit()
+    except Exception as e:  # noqa: BLE001
+        print(f"[WARN] could not mark job {job_id} failed: {e!r}", flush=True)
+
+
 async def run(job_id: int) -> None:
     create_db_tables()
 
@@ -58,7 +77,9 @@ async def run(job_id: int) -> None:
             print(f"[ERROR] Job {job_id} not found in DB", flush=True)
             sys.exit(1)
         if not job.csv_data:
-            print(f"[ERROR] Job {job_id} has no csv_data", flush=True)
+            msg = f"Job {job_id} has no csv_data — upload likely never wrote the row."
+            print(f"[ERROR] {msg}", flush=True)
+            _mark_failed(job_id, msg)
             sys.exit(1)
         csv_content = job.csv_data
         providers = [p.strip() for p in job.providers.split(",") if p.strip()] or ["bouncify"]
@@ -68,7 +89,9 @@ async def run(job_id: int) -> None:
     reader = csv.DictReader(io.StringIO(csv_content))
     rows = list(reader)
     if not rows:
-        print("[ERROR] CSV is empty", flush=True)
+        msg = "CSV is empty (no data rows after header)."
+        print(f"[ERROR] {msg}", flush=True)
+        _mark_failed(job_id, msg)
         sys.exit(1)
 
     headers = list(rows[0].keys())
@@ -129,4 +152,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a bulk email validation job")
     parser.add_argument("--job-id", type=int, required=True, help="Job ID to process")
     args = parser.parse_args()
-    asyncio.run(run(args.job_id))
+    try:
+        asyncio.run(run(args.job_id))
+    except SystemExit:
+        raise
+    except BaseException as e:
+        # Anything else (network, provider, OOM, KeyboardInterrupt) leaves
+        # the job stranded if we don't write a terminal state here.
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[FATAL] job {args.job_id} crashed: {e!r}\n{tb}", flush=True)
+        _mark_failed(args.job_id, f"{type(e).__name__}: {e}")
+        sys.exit(1)

@@ -7,6 +7,11 @@ on:
         description: "Job ID to process"
         required: true
         type: string
+      cache_ttl_days:
+        description: "Cache TTL in days (0 = no cache, blank = repo default)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   validate:
@@ -32,4 +37,5 @@ jobs:
           ZEROBOUNCE_API_KEY: ${{ secrets.ZEROBOUNCE_API_KEY }}
           NEVERBOUNCE_API_KEY: ${{ secrets.NEVERBOUNCE_API_KEY }}
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
-          CACHE_TTL_DAYS: ${{ vars.CACHE_TTL_DAYS }}
+          # Prefer the per-job value sent by the API; fall back to repo var.
+          CACHE_TTL_DAYS: ${{ inputs.cache_ttl_days != '' && inputs.cache_ttl_days || vars.CACHE_TTL_DAYS }}

@@ -1,21 +1,21 @@
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _drop_empty_env_values(cls, values):
-        """Drop empty-string env vars so int/float fields fall back to their
-        defaults instead of crashing during validation. Without this, a
-        GitHub repo variable created without a value (CACHE_TTL_DAYS=""),
-        or any unset SECRET that resolves to "", kills the worker on startup.
-        """
-        if isinstance(values, dict):
-            return {k: v for k, v in values.items() if v != ""}
-        return values
+    # env_ignore_empty=True: empty-string env vars (e.g. an unset
+    # GitHub `vars.CACHE_TTL_DAYS` rendered as "") are treated as unset
+    # so int/float fields fall back to their declared defaults instead of
+    # crashing with `int_parsing`. The previous `_drop_empty_env_values`
+    # `model_validator(mode="before")` did NOT fix this — pydantic-settings
+    # merges env values AFTER before-validators, so empty strings still
+    # reached field validation. That bug killed every GitHub Actions
+    # bulk_process run and every Vercel cold start with an unset numeric env.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        env_ignore_empty=True,
+    )
 
     bouncify_api_key: str = ""
     zerobounce_api_key: str = ""

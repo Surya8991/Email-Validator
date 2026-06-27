@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-27 (Session 9). Current VERSION: **0.9.0**
+> Last updated: 2026-06-27 (Session 10). Current VERSION: **0.9.1**
 
 ---
 
@@ -42,6 +42,7 @@
 - Use `hatchling` as build-backend — broken on Python 3.14. Use `setuptools.build_meta`
 - Use `socket` to check domain instead of `dnspython` — dnspython is already a dep and handles edge cases (NXDOMAIN vs timeout)
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
+- Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 
 ---
 
@@ -392,6 +393,183 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | `DATABASE_URL` | `bulk_process.yml` | Must match the Vercel app's DB — otherwise the worker can't see jobs the app created. |
 | `BOUNCIFY_API_KEY` | `bulk_process.yml` | Same as Vercel. |
 | `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `HUNTER_API_KEY` | `bulk_process.yml` | Optional, only if those providers are enabled. |
+
+---
+
+## Session 10 — 2026-06-27 (bulk-process resilience + config bug + audit)
+
+**Symptoms reported by user (screenshots):**
+- `Bulk Email Validation #1` workflow run: red X, ~19s, job_id=1 (later job_id=20).
+- `/jobs/1` UI: status `running`, `0 / 10 emails processed`, 0%.
+- New uploads on the UI **did not trigger any new workflow runs**.
+- Vercel logs: `GET /` and `/login` 504-ing with `[startup] create_db_tables skipped/failed:`.
+
+**The REAL root cause** (read this before re-debugging): `app/config.py`
+`_drop_empty_env_values` — added in session 8 to "tolerate empty-string env
+vars" — **never actually worked for env vars**. Pydantic-settings merges
+env-sourced values AFTER `model_validator(mode="before")`, so empty strings
+went straight to field validation and blew up on every `int` field with an
+unset env. GitHub Actions log for the failed Bulk Email Validation run
+shows this exactly:
+
+```
+pydantic_core.ValidationError: 1 validation error for Settings
+cache_ttl_days
+  Input should be a valid integer, unable to parse string as an integer
+  [type=int_parsing, input_value='', input_type=str]
+```
+
+`CACHE_TTL_DAYS` comes from `${{ vars.CACHE_TTL_DAYS }}` in
+`bulk_process.yml`; the repo var is unset → renders as `""` → `Settings()`
+fails at module import → script exits 1 before the first DB query. Same
+class of crash also explains Vercel cold-start 504s on any unset numeric
+env (e.g. `BOUNCIFY_DAILY_CAP=""`, `SMTP_PORT=""`).
+
+**Fix (one line):** drop the broken validator, set
+`env_ignore_empty=True` on `SettingsConfigDict`. Pydantic-settings 2.3+
+treats empty-string env vars as unset, falling back to declared defaults.
+Verified locally: `CACHE_TTL_DAYS=` now yields `cache_ttl_days=30`.
+
+**Why new uploads didn't trigger workflows:** with Vercel cold starts
+504-ing every request, the `POST /api/bulk` endpoint never even reached
+`_trigger_github_actions(...)`. Once config.py is fixed and redeployed,
+dispatch will fire on each upload again.
+
+**Secondary fix (process resilience):** `scripts/process_job.py` had **no
+top-level error handler**. The worker:
+1. Loaded the Job (10 emails, status `queued`).
+2. Marked the row `status="running"` and committed.
+3. Started the first chunk of `validate(...)` calls.
+4. Hit an exception somewhere in the chunk (network / provider / DB) — the
+   process exited non-zero, the workflow went red, **but the Job row was
+   never updated**. UI is left polling a `running` job that is no longer
+   running, forever.
+
+This same trap applies to every future failure mode: bad CSV header, missing
+provider key, Neon hiccup, OOM, etc. All of them leave the job stuck.
+
+**Fix (this session):**
+- `scripts/process_job.py`: wrap `run()` in `try/except`. On any unhandled
+  exception, the worker reopens a fresh `Session` (in case the previous one
+  is poisoned), sets `job.status="failed"` and writes a truncated `job.error`
+  message, then re-raises so the workflow still reports red. This makes the
+  UI honest — `failed` shows a real terminal state instead of a phantom
+  `running`.
+- Also: if the Job row's `csv_data` is empty, mark `failed` with an explicit
+  error instead of `sys.exit(1)` (same reason — UI was previously stuck).
+- `app/routes/api_bulk.py`: pass `cache_ttl_days` through `workflow_dispatch`
+  so the GHA run uses the same TTL the user picked at upload time. Previously
+  GHA always used `settings.cache_ttl_days` (30d default) regardless of the
+  form value.
+- `.github/workflows/bulk_process.yml`: declare the new `cache_ttl_days`
+  input and forward it as `CACHE_TTL_DAYS`.
+
+**How to recover Job #1 (and any other stuck row):**
+```sql
+UPDATE job SET status = 'failed', error = 'stranded by pre-0.9.1 worker'
+WHERE status = 'running' AND processed = 0;
+```
+Run this once on Neon. Subsequent failures will self-mark.
+
+**Audit pass (no changes needed, recorded for next session):**
+- `BouncifyProvider.verify` already returns `unknown` instead of raising when
+  the key is missing — that path is safe.
+- `_db_url()` falls back to local SQLite when `DATABASE_URL` is unset. In
+  GHA that means the worker queries a fresh empty SQLite and can't find the
+  job. If the workflow ever runs and fails immediately with "Job N not
+  found", the first thing to check is the `DATABASE_URL` repo secret.
+- `keep_warm.yml` cron comment says "every 4 minutes" but cron is every 3.
+  Harmless; not worth a code change this session.
+- `BulkJobResponse.total=0` is intentional — the row count is computed by
+  the worker after CSV parsing, not at upload time.
+
+---
+
+## Workflow Runbook — read before debugging bulk jobs or 504s
+
+### Quick triage (in order)
+
+1. **Are workflows even firing?**
+   ```
+   gh run list -R Surya8991/Email-Validator --limit 10
+   ```
+   If no recent `Bulk Email Validation` runs after a UI upload, the
+   `POST /api/bulk` dispatch never ran. Either the app is down (check
+   `/api/health`) or `GITHUB_PAT` / `GITHUB_REPO` env vars on Vercel are
+   missing.
+
+2. **Did the workflow start but fail?**
+   ```
+   gh run view <run-id> -R Surya8991/Email-Validator --log-failed | tail -80
+   ```
+   The traceback is at the bottom. Common failure shapes:
+   - `ValidationError ... cache_ttl_days ... empty string` → an env var is
+     unset and `env_ignore_empty=True` is missing in `config.py`. Fixed in
+     0.9.1 — if it returns, someone reverted the SettingsConfigDict.
+   - `Job N not found` → `DATABASE_URL` GitHub secret doesn't point at the
+     same DB the Vercel app writes to.
+   - `Exit code 1` immediately after pip install with no traceback → check
+     the workflow YAML for syntax errors or removed inputs.
+
+3. **Is a job stuck in `running` in the UI?** (0.9.1+ marks crashes as
+   `failed`, but old stuck rows need manual cleanup.)
+   ```sql
+   -- run on Neon
+   UPDATE job SET status='failed', error='stranded by pre-0.9.1 worker'
+   WHERE status='running' AND processed=0 AND created_at < NOW() - INTERVAL '30 minutes';
+   ```
+
+### Required env / secrets / vars (what breaks if missing)
+
+| Where | Name | Type | Breaks if missing |
+|---|---|---|---|
+| Vercel env | `DATABASE_URL` | secret | App can't read/write jobs |
+| Vercel env | `BOUNCIFY_API_KEY` | secret | Bouncify provider returns `unknown` for everything |
+| Vercel env | `GITHUB_PAT` (scopes: `actions:write`, `repo`) | secret | Bulk uploads queue but never dispatch to GHA |
+| Vercel env | `GITHUB_REPO` (e.g. `Surya8991/Email-Validator`) | secret | Same as above |
+| Vercel env | `SUPERADMIN_EMAIL` | secret | No superadmin gets promoted |
+| Vercel env | `SECRET_KEY` | secret | Session cookies survive restart but use the dev default |
+| GitHub repo | `DATABASE_URL` | Actions **secret** | GHA worker reads empty SQLite → "Job not found" |
+| GitHub repo | `BOUNCIFY_API_KEY` | Actions **secret** | GHA worker validates against an absent provider |
+| GitHub repo | `APP_URL` | Actions **variable** | `keep_warm.yml` exits with "not set" |
+| GitHub repo | `CACHE_TTL_DAYS` | Actions **variable** (optional) | Now harmless (falls back to default 30). Pre-0.9.1: crashed the run. |
+
+**Rule:** any int/float/bool env above CAN be unset — `env_ignore_empty=True`
+in `app/config.py` makes pydantic fall back to declared defaults. Do NOT
+re-add a custom "drop empty" `model_validator`; it does not fire for env
+sources.
+
+### Pre-merge checklist for any change that touches startup or workflows
+
+- [ ] `python -c "import os; os.environ['CACHE_TTL_DAYS']=''; from app.config import settings"` — must not raise.
+- [ ] `python -m py_compile scripts/process_job.py` — compile clean.
+- [ ] If you added a new env var to `bulk_process.yml`, ensure
+      `Settings` has either a default OR a corresponding entry that handles
+      `""` gracefully.
+- [ ] If you renamed an env var, grep `.github/workflows/` and `app/config.py`
+      both — they must agree.
+- [ ] Push, then `gh run list` to confirm Vercel redeploys and Keep Warm
+      stays green. Manually `gh workflow run keep_warm.yml` to force-trigger
+      if cron is slow to fire.
+
+### How to debug "no workflow triggered" specifically
+
+The flow:
+```
+UI upload → POST /api/bulk → _trigger_github_actions(job_id) → GitHub API
+                                   ↓ (returns False)
+                              in-process fallback (LOCAL ONLY — Vercel skips)
+```
+
+If no run appears in `gh run list`:
+1. `curl https://email-validator-lilac.vercel.app/api/health` — if not 200, the app is down. Triage there first.
+2. Vercel function logs for `POST /api/bulk` — look for
+   `GitHub Actions dispatch returned <N> for job ...` (0.9.1+ logs non-204
+   responses with the body).
+3. If the log says `dispatch failed`, the most common causes:
+   - PAT expired or missing the `workflow` scope.
+   - `GITHUB_REPO` typo (must be `owner/repo`, no `https://`).
+   - Default branch ≠ `main` (the API call hard-codes `"ref": "main"`).
 
 ---
 

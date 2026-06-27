@@ -47,7 +47,7 @@ def _upload_dir() -> str:
     return "uploads"
 
 
-async def _trigger_github_actions(job_id: int) -> bool:
+async def _trigger_github_actions(job_id: int, cache_ttl_days: int | None = None) -> bool:
     """Trigger bulk_process.yml workflow_dispatch for this job. Returns True on success."""
     if not settings.github_pat or not settings.github_repo:
         return False
@@ -56,6 +56,9 @@ async def _trigger_github_actions(job_id: int) -> bool:
     except ValueError:
         return False
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/bulk_process.yml/dispatches"
+    inputs: dict[str, str] = {"job_id": str(job_id)}
+    if cache_ttl_days is not None:
+        inputs["cache_ttl_days"] = str(cache_ttl_days)
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(
@@ -65,7 +68,12 @@ async def _trigger_github_actions(job_id: int) -> bool:
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                json={"ref": "main", "inputs": {"job_id": str(job_id)}},
+                json={"ref": "main", "inputs": inputs},
+            )
+        if resp.status_code != 204:
+            logger.warning(
+                "GitHub Actions dispatch returned %s for job %s: %s",
+                resp.status_code, job_id, resp.text[:300],
             )
         return resp.status_code == 204
     except Exception as e:  # noqa: BLE001
@@ -157,7 +165,7 @@ async def create_bulk_job(
     # GitHub's API, typically <1s) before returning. The in-process fallback
     # is only useful locally where the server stays alive; on Vercel it would
     # be killed mid-run anyway.
-    triggered = await _trigger_github_actions(job_id)
+    triggered = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
     if not triggered:
         if os.getenv("VERCEL"):
             logger.warning(
