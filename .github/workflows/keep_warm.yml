@@ -1,0 +1,53 @@
+name: Keep Warm
+
+# Pings the deployed app every 4 minutes so Neon (free tier auto-pauses
+# after ~5 min) and the Vercel function (cold-starts after ~5 min idle)
+# stay warm. The /api/health endpoint runs a SELECT 1 against the DB,
+# so this wakes both layers in one shot.
+#
+# Cost: free. ~10s per run, ~75 min/month — well within GitHub Actions'
+# free quota for private repos (2000 min/month).
+#
+# Setup: add a repo variable APP_URL with your deployed origin, e.g.
+#   APP_URL = https://email-validator-lilac.vercel.app
+# Settings -> Secrets and variables -> Actions -> Variables tab -> New.
+
+on:
+  schedule:
+    # Every 4 minutes. GitHub Actions cron has jitter (sometimes 5-15 min
+    # late on free tier), so 4 keeps us comfortably under Neon's 5-min pause.
+    - cron: "*/4 * * * *"
+  workflow_dispatch:  # manual run button
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping /api/health
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "::error::APP_URL repo variable is not set. Add it in Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+          echo "Pinging $APP_URL/api/health"
+          # Retry up to 3 times for cold starts; fail loudly if the site is actually down.
+          for i in 1 2 3; do
+            response=$(curl -sS -o /tmp/body.json -w "%{http_code}" --max-time 15 "$APP_URL/api/health" || echo "000")
+            echo "Attempt $i: HTTP $response"
+            if [ "$response" = "200" ]; then
+              cat /tmp/body.json
+              echo
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::Health check failed after 3 attempts (last status: $response)"
+          cat /tmp/body.json || true
+          exit 1
