@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.templating import templates
+from app.templating import job_eta_seconds, templates
 
 from app.auth import require_auth
 from app.config import settings
@@ -328,10 +328,15 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
         except Exception:
             provider_data = {}
         parsed.append({"email": r.email, "verdict": r.verdict, "providers": provider_data})
+    pct = int((job["processed"] / job["total"] * 100) if job["total"] else 0)
+    eta_seconds = job_eta_seconds(job["processed"], job["total"], job["created_at"]) \
+        if job["status"] == "running" else None
     return templates.TemplateResponse(
         request, "job.html", {
             "job": job,
             "results": parsed,
+            "pct": pct,
+            "eta_seconds": eta_seconds,
             "active_page": "jobs",
             "current_user": current_user,
         }
@@ -352,8 +357,11 @@ async def job_status_partial(request: Request, job_id: int):
         "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
     }
     pct = int((job["processed"] / job["total"] * 100) if job["total"] else 0)
+    eta_seconds = job_eta_seconds(job["processed"], job["total"], job["created_at"]) \
+        if job["status"] == "running" else None
     return templates.TemplateResponse(
-        request, "partials/job_progress.html", {"job": job, "pct": pct}
+        request, "partials/job_progress.html",
+        {"job": job, "pct": pct, "eta_seconds": eta_seconds},
     )
 
 

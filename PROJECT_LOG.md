@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-27 (Session 11). Current VERSION: **0.9.2**
+> Last updated: 2026-06-27 (Session 12). Current VERSION: **0.9.3**
 
 ---
 
@@ -399,6 +399,57 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | `DATABASE_URL` | `bulk_process.yml` | Must match the Vercel app's DB — otherwise the worker can't see jobs the app created. |
 | `BOUNCIFY_API_KEY` | `bulk_process.yml` | Same as Vercel. |
 | `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `HUNTER_API_KEY` | `bulk_process.yml` | Optional, only if those providers are enabled. |
+
+---
+
+## Session 12 — 2026-06-27 (loading + ETA UX)
+
+**Shipped:**
+- **Global HTMX progress bar** — 2px indigo top bar fades in for every HX
+  request (lives in `base.html`). Pure CSS, no JS, indeterminate-slide
+  animation. Visible on cache search, delete buttons, polling, anything.
+- **Per-row mid-request dim** — `tr:has(.htmx-request)` greys the row and
+  disables pointer events so a double-click on Delete can't race a 404.
+  `button.htmx-request` shows a `cursor: progress`.
+- **`.htmx-indicator` + `.hx-spin`** utility classes are now defined in
+  `base.html` so any partial can drop a spinner without re-importing.
+- **Bulk job ETA.** New helpers in `app/templating.py`:
+  - `humanize_duration(seconds)` → `'4s'`, `'2m 15s'`, `'1h 04m'`
+  - `job_eta_seconds(processed, total, started_at)` → remaining secs or
+    `None` (no progress yet, or done, or 0-total)
+  - `duration` Jinja filter registered for direct use in templates
+  - `partials/job_progress.html` renders `⏱ ~{{ eta | duration }} remaining`
+    when status='running', plus a status-specific dot/colored bar
+  - `/jobs/{id}/status` (polled every 2s) AND the initial `/jobs/{id}`
+    render both pass `eta_seconds` so the value is correct from first paint
+- **Jobs list auto-refresh** when any row is `queued` or `running` —
+  table polls `/jobs` every 5s via `hx-get` + `hx-select=".card"`. A
+  blue header banner reminds the user it's refreshing. No polling when
+  all jobs are terminal.
+- **Queued state UX** — both the job detail page and the row badge now
+  show a pulsing dot + a "Cold-start usually takes 20–40s — runner
+  provisioning + pip install" hint so the first 30s of any new job
+  doesn't look broken.
+
+**Why this design:**
+- Pure-CSS progress bar avoids touching every template. HTMX flips
+  `body.htmx-request` for free.
+- `:has()` was the cleanest way to bubble the in-flight state from a
+  button up to its `<tr>` — supported in all current evergreens (since
+  mid-2023). If it ever breaks for an old Safari user the worst case is
+  the row isn't dimmed; deletes still work.
+- ETA is computed from `created_at` rather than a new `started_at`
+  column to avoid a migration. GHA dispatch is usually <1 min from
+  queue and Bouncify dominates the elapsed time once running, so the
+  estimate is accurate within seconds.
+
+**Edit policy** for anything new that uses HTMX:
+- Just write the `hx-*` attrs as usual. The global progress bar covers
+  the loading state automatically.
+- Drop `<span class="htmx-indicator">…spinner…</span>` inside a button
+  when you want an inline spinner.
+- For row deletes: `hx-target` the row's `id`, `hx-swap="outerHTML"`. The
+  global CSS dims the row in-flight; no extra JS needed.
 
 ---
 

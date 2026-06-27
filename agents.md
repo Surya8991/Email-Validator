@@ -130,6 +130,19 @@ All normalize to: `valid | invalid | risky | unknown`
 - `consensus` — all enabled providers in parallel, majority vote
 - `waterfall` — local → hunter → bouncify → zerobounce (stop at first confident result)
 
+## Loading / ETA (0.9.3)
+- `base.html` ships a global CSS-only HTMX progress bar (`#hx-progress`).
+  Every `hx-*` request fades it in — no per-template wiring needed.
+- Per-row dim: `tr:has(.htmx-request)` greys + locks the row while a
+  delete is in flight.
+- Inline button spinner: drop `<span class="htmx-indicator hx-spin"></span>`.
+- ETA on jobs: `app/templating.py` exposes `humanize_duration` (Jinja
+  filter `duration`) and `job_eta_seconds(processed, total, started_at)`.
+  Used by `partials/job_progress.html`; computed from `Job.created_at`
+  to avoid a `started_at` migration.
+- `/jobs` auto-polls every 5s when any row is queued/running, via
+  `hx-get` + `hx-select=".card"`.
+
 ## Delete endpoints (0.9.2)
 - `DELETE /api/bulk/{id}` — deletes a Job + its EmailResult rows. 409 if `status='running'`.
 - `POST /api/bulk/clear` — admin-only. Deletes all non-running jobs.

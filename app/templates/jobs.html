@@ -27,7 +27,17 @@
     <a href="/validate" class="text-indigo-500 hover:underline text-sm mt-2 inline-block">Upload a CSV →</a>
   </div>
   {% else %}
-  <div class="card overflow-hidden">
+  {% set live = jobs | selectattr('status', 'in', ['queued', 'running']) | list | length %}
+  <div class="card overflow-hidden"
+    {% if live %}hx-get="/jobs" hx-trigger="every 5s" hx-select=".card" hx-swap="outerHTML"{% endif %}>
+    {% if live %}
+    <div class="px-4 py-2 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-100 dark:border-blue-900 text-xs text-blue-700 dark:text-blue-300">
+      <span class="inline-flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+        Auto-refreshing every 5 seconds — {{ live }} job{{ 's' if live != 1 else '' }} in progress
+      </span>
+    </div>
+    {% endif %}
     <table class="w-full text-sm">
       <thead class="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
         <tr>
@@ -58,8 +68,17 @@
           </td>
           <td class="px-4 py-3">
             {% if job.status == 'done' %}<span class="badge-valid">done</span>
-            {% elif job.status == 'running' %}<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs px-2 py-0.5 rounded-full font-semibold">running</span>
-            {% elif job.status == 'failed' %}<span class="badge-invalid">failed</span>
+            {% elif job.status == 'running' %}
+              <span class="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                running
+              </span>
+            {% elif job.status == 'queued' %}
+              <span class="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs px-2 py-0.5 rounded-full font-semibold inline-flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-gray-400 animate-pulse"></span>
+                queued
+              </span>
+            {% elif job.status == 'failed' %}<span class="badge-invalid" title="{{ job.error or '' }}">failed</span>
             {% else %}<span class="badge-unknown">{{ job.status }}</span>{% endif %}
           </td>
           <td class="px-4 py-3 text-xs text-gray-400">{{ job.created_at | ist('%Y-%m-%d %H:%M') }} IST</td>

@@ -1,17 +1,41 @@
-﻿<div id="progress-block"
+<div id="progress-block"
   {% if job.status in ['queued','running'] %}
   hx-get="/jobs/{{ job.id }}/status" hx-trigger="every 2s" hx-swap="outerHTML"
   {% endif %}
-  class="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
-  <div class="flex justify-between text-sm text-gray-600">
-    <span>{{ job.processed }} / {{ job.total }} emails processed</span>
-    <span>{{ pct }}%</span>
+  class="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-2">
+  <div class="flex justify-between items-baseline text-sm text-gray-600 dark:text-gray-300">
+    <span>
+      {% if job.status == 'queued' %}
+        <span class="inline-flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-gray-400 animate-pulse"></span>
+          Queued — waiting for GitHub Actions to start
+        </span>
+      {% elif job.status == 'running' %}
+        <span class="inline-flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+          {{ job.processed }} / {{ job.total }} processed
+        </span>
+      {% else %}
+        {{ job.processed }} / {{ job.total }} processed
+      {% endif %}
+    </span>
+    <span class="font-mono">{{ pct }}%</span>
   </div>
-  <div class="w-full bg-gray-100 rounded-full h-2">
-    <div class="bg-indigo-500 h-2 rounded-full transition-all" style="width: {{ pct }}%"></div>
+  <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+    <div class="h-2 rounded-full transition-all duration-500
+      {% if job.status == 'failed' %}bg-red-500{% elif job.status == 'done' %}bg-green-500{% else %}bg-indigo-500{% endif %}"
+      style="width: {{ pct if job.status != 'queued' else 4 }}%"></div>
   </div>
-  {% if job.status == 'done' %}
-  <p class="text-xs text-green-600 font-medium">✓ Complete - <a href="/api/bulk/{{ job.id }}/download" class="underline">Download CSV</a></p>
+  {% if job.status == 'running' and eta_seconds %}
+  <p class="text-xs text-gray-500 dark:text-gray-400">
+    ⏱ ~{{ eta_seconds | duration }} remaining
+  </p>
+  {% elif job.status == 'queued' %}
+  <p class="text-xs text-gray-400">
+    Cold-start usually takes 20–40s — runner provisioning + pip install.
+  </p>
+  {% elif job.status == 'done' %}
+  <p class="text-xs text-green-600 font-medium">✓ Complete · <a href="/api/bulk/{{ job.id }}/download" class="underline">Download CSV</a></p>
   {% elif job.status == 'failed' %}
   <p class="text-xs text-red-600">✗ Failed: {{ job.error or 'unknown error' }}</p>
   {% endif %}
