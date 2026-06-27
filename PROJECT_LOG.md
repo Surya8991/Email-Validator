@@ -395,6 +395,42 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 
 ---
 
+## Open Issues (2026-06-27)
+
+Tracked here so a future session doesn't have to re-discover them from logs.
+
+### 1. Cold-start 504s still happen on fresh Vercel function instances
+**Symptom (from Vercel logs around 18:30):**
+```
+GET /          504  Task timed out after 10 seconds
+GET /login     504  Task timed out after 10 seconds
+GET /favicon.ico 504  Task timed out after 10 seconds
+GET /login     200  [startup] create_db_tables skipped/failed:
+```
+
+**Diagnosis:** The lifespan still runs `_safe_startup(create_db_tables)`, `_safe_startup(_bootstrap_admin)`, and `_safe_startup(backfill_team_owners)` **sequentially**, each with a 4s timeout. Worst case: 4 + 4 + 4 = 12s of lifespan before the function can serve a single byte. Vercel kills at 10s. Some cold-start instances 504 every request they get, then die; the next instance retries.
+
+Once a function instance is warm it serves everything fine — the issue is purely "first request after Vercel spins up a new instance."
+
+**Fix to ship (this session):** run the three startup ops in parallel via `asyncio.gather(...)` under a single 4s ceiling. Worst-case lifespan: 4s, not 12s. Sub-tasks that get cancelled run again on next cold start (idempotent).
+
+### 2. GitHub Actions cron is slow to start auto-firing on new schedules
+**Symptom:** `keep_warm.yml` was manually triggered and ran green, but auto-runs haven't appeared for 30+ minutes.
+
+**Diagnosis:** GitHub's free-tier scheduler delays newly-added scheduled workflows significantly (documented behavior). The schedule was tightened from `*/4` → `*/3` and offset off the hour grid (`1,4,7,...`) to help, but the initial activation delay isn't something we can short-circuit from code.
+
+**Workaround:** keep manually triggering Keep Warm every ~10 min until the auto-cron starts. Or set up UptimeRobot as a redundant external pinger (covered in earlier session notes).
+
+### 3. Each new Vercel cold-start instance pays the full chain again
+**Diagnosis:** Vercel's serverless Python runtime spins fresh function instances on demand. Even with Neon warm, a brand new instance still has to: spin Python, import the app (~1s with our deps including openpyxl), and run lifespan. That's currently ~3-5s of overhead before request handling. Issue #1 above amplifies this.
+
+**Mitigations on the table (not yet implemented):**
+- Move the DB ops out of lifespan entirely → lazy run-once-per-process via middleware.
+- Pre-import heavy modules at module top so import cost is at deploy time, not first-request time (already mostly true; verify openpyxl import isn't lazy).
+- Consider Render free tier — slower cold starts but no 10s ceiling.
+
+---
+
 ## Free-Tier Infra Notes (read before debugging timeouts)
 
 The app is deployed on **Vercel Hobby (10s function timeout)** with **Neon Free (5-min idle auto-pause)**. The two together create a cold-start chain that has caused most production incidents:

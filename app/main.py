@@ -63,27 +63,50 @@ def _bootstrap_admin() -> None:
                 db.commit()
 
 
-async def _safe_startup(fn) -> None:
-    """Run a blocking startup callable off the event loop with a tight timeout.
-
-    On Vercel + cold Neon, sync DB ops in lifespan can each take 5-8s; if any
-    one of them blows the function's 10s budget the whole cold start times
-    out and the user never sees a response. We absorb the slow path here so
-    the app always becomes responsive — operations that don't complete in
-    time will simply be retried on the next request's natural code path.
-    """
-    import asyncio
-    try:
-        await asyncio.wait_for(asyncio.to_thread(fn), timeout=4.0)
-    except Exception as e:  # noqa: BLE001
-        print(f"[startup] {fn.__name__} skipped/failed: {e}", flush=True)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _safe_startup(create_db_tables)
-    await _safe_startup(_bootstrap_admin)
-    await _safe_startup(backfill_team_owners)
+    """All blocking startup DB ops run in parallel under a SINGLE 4s ceiling.
+
+    Previous version awaited each op sequentially with its own 4s timeout,
+    so worst-case lifespan was 12s — already over Vercel Hobby's 10s budget.
+    A cold-start instance with a slow first query on Neon would 504 every
+    request it ever got. Now total lifespan is capped at 4s regardless of
+    how many ops we add; sub-tasks that don't finish are cancelled and just
+    retry on the next cold start (each op is idempotent).
+    """
+    import asyncio
+
+    async def _run(fn):
+        try:
+            await asyncio.to_thread(fn)
+            return (fn.__name__, "ok", None)
+        except Exception as e:  # noqa: BLE001
+            return (fn.__name__, "error", repr(e))
+
+    async def _phase_one():
+        # Schema first — bootstrap + backfill both depend on tables existing.
+        return await _run(create_db_tables)
+
+    async def _phase_two():
+        # These two are independent of each other and run in parallel after schema.
+        return await asyncio.gather(_run(_bootstrap_admin), _run(backfill_team_owners))
+
+    try:
+        # Whole pipeline must finish within 4s. Phase one ~1-2s on warm DB,
+        # leaves ~2-3s for phase two — both still well under Vercel's 10s budget
+        # plus the rest of cold-start overhead.
+        async def _pipeline():
+            r1 = await _phase_one()
+            r2 = await _phase_two()
+            return [r1, *r2]
+
+        results = await asyncio.wait_for(_pipeline(), timeout=4.0)
+        for name, status, err in results:
+            if status != "ok":
+                print(f"[startup] {name} {status}: {err}", flush=True)
+    except asyncio.TimeoutError:
+        print("[startup] DB ops exceeded 4s — continuing; will retry on next cold start", flush=True)
+
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
     if registry._client and not registry._client.is_closed:
