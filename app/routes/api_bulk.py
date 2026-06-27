@@ -57,7 +57,7 @@ async def _trigger_github_actions(job_id: int) -> bool:
         return False
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/bulk_process.yml/dispatches"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
                 url,
                 headers={
@@ -68,8 +68,20 @@ async def _trigger_github_actions(job_id: int) -> bool:
                 json={"ref": "main", "inputs": {"job_id": str(job_id)}},
             )
         return resp.status_code == 204
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        logger.warning("GitHub Actions dispatch failed for job %s: %s", job_id, e)
         return False
+
+
+async def _dispatch_then_fallback(
+    job_id: int, filepath: str, email_column: str,
+    providers: list[str], strategy: str, ttl: int | None,
+) -> None:
+    """Background task: try GitHub Actions first; if that fails, run in-process."""
+    if await _trigger_github_actions(job_id):
+        return
+    logger.info("GitHub Actions unavailable for job %s — falling back to in-process", job_id)
+    await process_bulk_job(job_id, filepath, email_column, providers, strategy, ttl)
 
 
 @router.post("/api/bulk", response_model=BulkJobResponse)
@@ -139,12 +151,13 @@ async def create_bulk_job(
 
     ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
 
-    # Try GitHub Actions first — falls back to BackgroundTasks if PAT not set
-    triggered = await _trigger_github_actions(job_id)
-    if not triggered:
-        background_tasks.add_task(
-            process_bulk_job, job_id, filepath, email_column, providers.split(","), strategy, ttl
-        )
+    # Run trigger-or-fallback OUT OF BAND so the response returns immediately.
+    # Otherwise a slow GitHub API call + cold-start latency burns the 10s
+    # Vercel Hobby budget and the request 504s before the user sees a job id.
+    background_tasks.add_task(
+        _dispatch_then_fallback,
+        job_id, filepath, email_column, providers.split(","), strategy, ttl,
+    )
 
     return BulkJobResponse(job_id=job_id, total=0, status="queued")
 
