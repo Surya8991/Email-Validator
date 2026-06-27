@@ -110,8 +110,13 @@
             Drop your CSV or Excel file here or <span class="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
           </p>
           <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            Accepts <strong>.csv</strong> and <strong>.xlsx</strong> &middot; column named "email" is auto-detected &middot;
-            <a href="/samples/sample_emails.csv" download class="text-indigo-500 hover:underline">Download sample</a>
+            Accepts <strong>.csv</strong> and <strong>.xlsx</strong> &middot; column named "email" is auto-detected
+          </p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Download template:
+            <a href="/api/bulk/template.csv" download class="text-indigo-500 hover:underline">CSV</a>
+            <span class="mx-1 text-gray-300">·</span>
+            <a href="/api/bulk/template.xlsx" download class="text-indigo-500 hover:underline">Excel</a>
           </p>
           <input id="csv-file" name="file" type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden"
                  onchange="fileSelected(this)"/>

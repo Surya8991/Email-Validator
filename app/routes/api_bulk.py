@@ -149,6 +149,51 @@ async def create_bulk_job(
     return BulkJobResponse(job_id=job_id, total=0, status="queued")
 
 
+_TEMPLATE_ROWS: list[tuple[str, str, str, str]] = [
+    ("email", "name", "source", "notes"),
+    ("john.doe@example.com", "John Doe", "website", "replace with your data"),
+    ("jane.smith@outlook.com", "Jane Smith", "referral", ""),
+    ("user@gmail.com", "Gmail User", "organic", ""),
+]
+
+
+@router.get("/api/bulk/template.xlsx")
+def download_xlsx_template():
+    """Generate the bulk-upload template as an XLSX on the fly."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "emails"
+    for row in _TEMPLATE_ROWS:
+        ws.append(row)
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 14
+    ws.column_dimensions["D"].width = 28
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="bulk_template.xlsx"'},
+    )
+
+
+@router.get("/api/bulk/template.csv")
+def download_csv_template():
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    for row in _TEMPLATE_ROWS:
+        writer.writerow(row)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="bulk_template.csv"'},
+    )
+
+
 @router.get("/api/bulk/{job_id}", response_model=BulkStatusResponse)
 async def get_bulk_status(job_id: int):
     with Session(engine) as session:
