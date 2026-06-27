@@ -146,7 +146,7 @@ async def create_bulk_job(
         )
         session.add(job)
         session.commit()
-        session.refresh(job)
+        # job.id is populated by the commit; no second roundtrip needed.
         job_id = job.id
 
     ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
