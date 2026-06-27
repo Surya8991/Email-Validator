@@ -13,3 +13,4 @@ tenacity>=8.4.0
 aiofiles>=23.2.1
 psycopg2-binary>=2.9.9
 bcrypt>=4.0.0
+openpyxl>=3.1.0

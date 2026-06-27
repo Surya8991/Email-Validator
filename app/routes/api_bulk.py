@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import os
 
 import httpx
@@ -13,6 +14,27 @@ from app.db import engine
 from app.models import EmailResult, Job
 from app.schemas import BulkJobResponse, BulkStatusResponse
 from app.workers.bulk_worker import process_bulk_job
+
+logger = logging.getLogger(__name__)
+
+
+def _looks_like_xlsx(data: bytes, filename: str) -> bool:
+    # XLSX is a ZIP archive — magic bytes "PK\x03\x04"
+    return data[:4] == b"PK\x03\x04" or filename.lower().endswith((".xlsx", ".xlsm"))
+
+
+def _xlsx_to_csv(data: bytes) -> str:
+    """Convert the first sheet of an XLSX workbook into CSV text."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    ws = wb.active
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    for row in ws.iter_rows(values_only=True):
+        writer.writerow(["" if v is None else str(v) for v in row])
+    wb.close()
+    return buf.getvalue()
 
 router = APIRouter()
 
@@ -60,27 +82,48 @@ async def create_bulk_job(
     cache_ttl_days: int = Form(default=0),
 ):
     contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file.")
+
+    # Accept .xlsx / .xlsm by converting to CSV; otherwise decode as text.
+    if _looks_like_xlsx(contents, file.filename or ""):
+        try:
+            csv_str = _xlsx_to_csv(contents)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("XLSX parse failed: %s", e)
+            raise HTTPException(
+                status_code=400,
+                detail="Could not read the Excel file. Save it as CSV and try again.",
+            )
+    else:
+        try:
+            csv_str = contents.decode("utf-8-sig")  # strips BOM if present
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "File is not a readable CSV (looks like binary data). "
+                    "Upload a UTF-8 CSV or an .xlsx workbook."
+                ),
+            )
 
     if settings.max_bulk_emails > 0:
-        row_count = contents.count(b"\n")
+        row_count = csv_str.count("\n")
         if row_count > settings.max_bulk_emails:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"CSV exceeds {settings.max_bulk_emails} email limit. "
-                    "Reduce the file size or raise MAX_BULK_EMAILS."
+                    f"File exceeds {settings.max_bulk_emails} email limit. "
+                    "Reduce the size or raise MAX_BULK_EMAILS."
                 ),
             )
 
-    # Decode for DB storage (GitHub Actions reads csv_data from DB)
-    csv_str = contents.decode("utf-8-sig")  # strips BOM if present
-
-    # Also write to disk for local BackgroundTask fallback
+    # Write CSV to disk for local BackgroundTask fallback (always CSV now, regardless of source)
     upload_dir = _upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
     filepath = os.path.join(upload_dir, f"upload_{id(contents)}.csv")
-    with open(filepath, "wb") as f:
-        f.write(contents)
+    with open(filepath, "w", encoding="utf-8", newline="") as f:
+        f.write(csv_str)
 
     with Session(engine) as session:
         job = Job(

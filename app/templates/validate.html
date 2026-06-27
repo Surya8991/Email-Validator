@@ -107,13 +107,13 @@
           ondrop="handleDrop(event)">
           <div class="text-4xl mb-3">📂</div>
           <p class="text-sm text-gray-600 dark:text-gray-300">
-            Drop your CSV here or <span class="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
+            Drop your CSV or Excel file here or <span class="text-indigo-600 dark:text-indigo-400 font-medium">browse</span>
           </p>
           <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            Column named "email" is auto-detected &middot;
+            Accepts <strong>.csv</strong> and <strong>.xlsx</strong> &middot; column named "email" is auto-detected &middot;
             <a href="/samples/sample_emails.csv" download class="text-indigo-500 hover:underline">Download sample</a>
           </p>
-          <input id="csv-file" name="file" type="file" accept=".csv" class="hidden"
+          <input id="csv-file" name="file" type="file" accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden"
                  onchange="fileSelected(this)"/>
           <div id="file-preview" class="mt-4 hidden">
             <div class="inline-flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-3 py-1.5 rounded-lg text-sm font-medium border border-indigo-200 dark:border-indigo-800">
@@ -317,19 +317,28 @@ async function submitBulk(e) {
   btn.disabled = true; btn.textContent = 'Uploading...';
   try {
     const res = await fetch('/api/bulk', {method:'POST', body: data});
-    const json = await res.json();
+    // Read body once as text; try to parse JSON for the success / structured-error paths.
+    const raw = await res.text();
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch (_) {}
+
     if (!res.ok) {
-      resultBox.innerHTML = `<div class="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 rounded-xl text-sm text-red-600">${json.detail || 'Upload failed'}</div>`;
+      const msg = (payload && (payload.detail || payload.message)) || raw || `HTTP ${res.status}`;
+      resultBox.innerHTML = `<div class="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 rounded-xl text-sm text-red-600">Upload failed: ${msg}</div>`;
+      return;
+    }
+    if (!payload) {
+      resultBox.innerHTML = `<div class="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 rounded-xl text-sm text-red-600">Unexpected response from server.</div>`;
       return;
     }
     resultBox.innerHTML =
       `<div class="p-4 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 rounded-xl text-sm">
-        Job <strong class="font-mono">#${json.job_id}</strong> queued.
-        <a href="/jobs/${json.job_id}" class="ml-2 text-indigo-600 dark:text-indigo-400 font-medium underline">Track progress</a>
+        Job <strong class="font-mono">#${payload.job_id}</strong> queued.
+        <a href="/jobs/${payload.job_id}" class="ml-2 text-indigo-600 dark:text-indigo-400 font-medium underline">Track progress</a>
       </div>`;
   } catch (err) {
     resultBox.innerHTML =
-      `<div class="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 rounded-xl text-sm text-red-600">Upload failed: ${err}</div>`;
+      `<div class="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 rounded-xl text-sm text-red-600">Network error: ${err}</div>`;
   } finally {
     btn.disabled = false; btn.textContent = 'Start Bulk Validation';
   }
