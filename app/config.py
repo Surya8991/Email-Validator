@@ -1,8 +1,21 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_empty_env_values(cls, values):
+        """Drop empty-string env vars so int/float fields fall back to their
+        defaults instead of crashing during validation. Without this, a
+        GitHub repo variable created without a value (CACHE_TTL_DAYS=""),
+        or any unset SECRET that resolves to "", kills the worker on startup.
+        """
+        if isinstance(values, dict):
+            return {k: v for k, v in values.items() if v != ""}
+        return values
 
     bouncify_api_key: str = ""
     zerobounce_api_key: str = ""
