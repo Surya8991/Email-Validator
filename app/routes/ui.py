@@ -3,7 +3,6 @@ import json
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse

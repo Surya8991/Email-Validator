@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-27 (Session 10). Current VERSION: **0.9.1**
+> Last updated: 2026-06-27 (Session 11). Current VERSION: **0.9.2**
 
 ---
 
@@ -62,7 +62,7 @@
 
 | Strategy | Behavior | Cost |
 |---|---|---|
-| `bouncify_only` | Single provider, returns immediately | 1 credit |
+| `bouncify_only` | Free local syntax+MX pre-filter; if local says `invalid`, skip Bouncify. Otherwise call Bouncify. | 0 credits on hard-invalids, 1 otherwise |
 | `local_first` | Local check first; skip paid API only on hard `invalid` | 0–1 credits |
 | `consensus` | All enabled providers in parallel, majority vote | N credits |
 | `waterfall` | local → hunter → bouncify → zerobounce; stop at first confident verdict | 0–N credits |
@@ -112,7 +112,12 @@ All external HTTP calls are mocked with `respx`. Auth tests use `auth_client` fi
 | `POST` | `/verify/htmx` | Form-encoded single verify → HTML partial (used by UI) |
 | `POST` | `/api/bulk` | Upload CSV → queue job → `BulkJobResponse` |
 | `GET` | `/api/bulk/{id}` | Poll job status → `BulkStatusResponse` |
+| `DELETE` | `/api/bulk/{id}` | Delete job + its EmailResult rows. 409 if running. |
+| `POST` | `/api/bulk/clear` | Admin-only. Delete all non-running jobs. |
 | `GET` | `/api/bulk/{id}/download` | Download results CSV |
+| `DELETE` | `/api/cache/{id}` | Delete one cache row (auth required) |
+| `POST` | `/api/cache/purge` | Delete expired rows (auth required) |
+| `POST` | `/api/cache/clear` | Admin-only. Delete every cache row. |
 | `GET` | `/api/health` | Health + enabled providers |
 | `GET` | `/docs` | FastAPI auto-generated OpenAPI docs |
 
@@ -121,7 +126,8 @@ All external HTTP calls are mocked with `respx`. Auth tests use `auth_client` fi
 ```
 app/
   main.py               FastAPI app + lifespan (httpx client init/close)
-  config.py             pydantic-settings — loads .env
+  config.py             pydantic-settings — loads .env (env_ignore_empty=True)
+  templating.py         shared Jinja2Templates + `ist` filter (UTC→IST)
   db.py                 SQLModel engine + create_db_tables()
   models.py             Job, EmailResult, EmailCache, ApiUsage
   schemas.py            ProviderResult, SingleVerifyRequest/Response, Bulk*
@@ -393,6 +399,47 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | `DATABASE_URL` | `bulk_process.yml` | Must match the Vercel app's DB — otherwise the worker can't see jobs the app created. |
 | `BOUNCIFY_API_KEY` | `bulk_process.yml` | Same as Vercel. |
 | `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `HUNTER_API_KEY` | `bulk_process.yml` | Optional, only if those providers are enabled. |
+
+---
+
+## Session 11 — 2026-06-27 (delete features, IST UI, bouncify_only free pre-filter)
+
+**Shipped:**
+- **Timestamps render in IST everywhere.** New `app/templating.py` exposes a
+  single shared `Jinja2Templates` instance with an `ist(value, fmt)` filter.
+  All 4 route files (`ui`, `admin`, `auth_routes`, `api_single`) now import
+  `templates` from there instead of building their own. Every template's
+  `{{ X.strftime('FMT') }}` was replaced with `{{ X | ist('FMT') }}` —
+  14 sites across 9 templates. DB columns stay naive-UTC; conversion is
+  display-only.
+- **Delete features (every list that needed one):**
+  - `DELETE /api/bulk/{job_id}` — wipes the job and its `EmailResult` rows.
+    409 if `status='running'` (worker would crash mid-write). Auth required.
+  - `POST /api/bulk/clear` — admin-only. Deletes all non-running jobs +
+    their results in one transaction.
+  - `DELETE /api/cache/{id}` — now requires auth (was anonymous!).
+  - `POST /api/cache/clear` — new, admin-only. Wipes the entire cache.
+  - UI: per-row Delete on `/jobs` + Delete on the detail page; "Clear all
+    history" header button on `/jobs` (admin-only); "Clear all" on `/cache`
+    (admin-only). Existing cache-row HX-delete already wired.
+- **`bouncify_only` strategy now runs a free local pre-filter first.** If
+  `LocalProvider` returns `invalid` (syntax error or no MX/A record), the
+  Bouncify call is skipped — same verdict, zero credits. For everything
+  else, Bouncify is the authoritative call exactly as before. Pure
+  savings, no accuracy loss. Cache hits already short-circuited even
+  earlier via `validate_with_cache`.
+
+**Security fixes folded in:**
+- `DELETE /api/cache/{id}` and `POST /api/cache/purge` were missing
+  `require_auth`. Anyone could DROP cache rows with a curl. Both now
+  gated.
+- `POST /api/cache/clear` and `POST /api/bulk/clear` are admin-only.
+  Regular users can delete only individual rows.
+
+**Migration / data notes:** none. The new endpoints are additive. Existing
+job rows render fine (templates already use dotted `job.x` access which
+Jinja handles for both objects and the new dict shape from column
+projection in session 10).
 
 ---
 

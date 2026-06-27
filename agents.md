@@ -125,7 +125,7 @@ All normalize to: `valid | invalid | risky | unknown`
 - Local: syntax + MX + disposable-email-domains + role prefix checks
 
 ## Strategies
-- `bouncify_only` — single provider, cheapest
+- `bouncify_only` — free local syntax+MX pre-filter (skips Bouncify on hard invalids), then Bouncify for the rest. Cheapest single-provider path.
 - `local_first` — local check first; skip paid API on obvious invalids
 - `consensus` — all enabled providers in parallel, majority vote
 - `waterfall` — local → hunter → bouncify → zerobounce (stop at first confident result)

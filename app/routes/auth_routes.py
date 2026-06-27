@@ -3,7 +3,6 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import bcrypt
 from fastapi import APIRouter, Depends, Form, Request

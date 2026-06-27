@@ -5,13 +5,15 @@ import logging
 import os
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
+from sqlalchemy import text
 from sqlmodel import Session, select
 
+from app.auth import require_auth
 from app.config import settings
 from app.db import engine
-from app.models import EmailResult, Job
+from app.models import EmailResult, Job, User
 from app.schemas import BulkJobResponse, BulkStatusResponse
 from app.workers.bulk_worker import process_bulk_job
 
@@ -275,6 +277,55 @@ async def get_bulk_status(job_id: int):
         summary=summary,
         download_url=download_url,
     )
+
+
+@router.delete("/api/bulk/{job_id}")
+async def delete_job(job_id: int, current_user: User = Depends(require_auth)):
+    """Delete a single job and all of its EmailResult rows.
+
+    A running job cannot be deleted — its worker would crash mid-write
+    against a missing FK row. Mark it failed first if you need to abort.
+    """
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status == "running":
+            raise HTTPException(
+                status_code=409,
+                detail="Job is currently running. Wait for it to finish or fail.",
+            )
+        # EmailResult.job_id has no ON DELETE CASCADE in the model, so wipe
+        # explicitly. Single DELETE is cheap on Neon with the implicit index.
+        session.execute(
+            text("DELETE FROM emailresult WHERE job_id = :jid"),
+            {"jid": job_id},
+        )
+        session.delete(job)
+        session.commit()
+    return {"deleted": True, "job_id": job_id}
+
+
+@router.post("/api/bulk/clear")
+async def clear_all_jobs(current_user: User = Depends(require_auth)):
+    """Delete every non-running job (and its EmailResult rows). Admin-only —
+    history is shared across users in this app."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with Session(engine) as session:
+        running = session.execute(
+            text("SELECT COUNT(*) FROM job WHERE status = 'running'")
+        ).scalar() or 0
+        # Wipe results for any job we're about to delete.
+        session.execute(text(
+            "DELETE FROM emailresult WHERE job_id IN "
+            "(SELECT id FROM job WHERE status != 'running')"
+        ))
+        deleted = session.execute(
+            text("DELETE FROM job WHERE status != 'running'")
+        ).rowcount or 0
+        session.commit()
+    return {"deleted": deleted, "kept_running": running}
 
 
 @router.get("/api/bulk/{job_id}/download")

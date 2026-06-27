@@ -14,6 +14,15 @@
     {% if job.filename %}
     <span class="text-xs text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">{{ job.filename }}</span>
     {% endif %}
+    {% if job.status != 'running' %}
+    <button
+      hx-delete="/api/bulk/{{ job.id }}"
+      hx-confirm="Delete job #{{ job.id }} and all its results? This cannot be undone."
+      hx-on::after-request="if (event.detail.successful) window.location.href='/jobs'"
+      class="ml-auto text-xs text-red-500 hover:text-red-700 hover:underline">
+      Delete job
+    </button>
+    {% endif %}
   </div>
 
   <!-- Live progress -->

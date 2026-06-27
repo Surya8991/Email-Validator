@@ -78,7 +78,7 @@ def get_stats():
 
 
 @router.post("/api/cache/purge")
-def purge_cache():
+def purge_cache(current_user: User = Depends(require_auth)):
     count = purge_expired()
     return {"purged": count}
 
@@ -118,7 +118,7 @@ def export_cache(q: str = "", current_user: User = Depends(require_auth)):
 
 
 @router.delete("/api/cache/{cache_id}")
-def delete_cache_entry(cache_id: int):
+def delete_cache_entry(cache_id: int, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         row = session.get(EmailCache, cache_id)
         if not row:
@@ -126,6 +126,17 @@ def delete_cache_entry(cache_id: int):
         session.delete(row)
         session.commit()
     return {"deleted": True}
+
+
+@router.post("/api/cache/clear")
+def clear_all_cache(current_user: User = Depends(require_auth)):
+    """Delete every cache row. Admin-only — wipes shared cache for all users."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+    with Session(engine) as session:
+        count = session.execute(text("DELETE FROM emailcache")).rowcount or 0
+        session.commit()
+    return {"deleted": count}
 
 
 @router.get("/api/domain/{domain}")

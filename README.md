@@ -241,7 +241,7 @@ DEL  /api/cache/{id}
 
 | Strategy | Cost | Description |
 |---|---|---|
-| `bouncify_only` | $ | Single provider, fastest. 1 credit per email. |
+| `bouncify_only` | $ | Free local pre-filter (syntax + MX); if local says `invalid`, no Bouncify call. Otherwise 1 credit per email. |
 | `local_first` | ¢ | Free local check first. API only if not clearly invalid. |
 | `consensus` | $$$ | All providers in parallel, majority vote. Most accurate. |
 | `waterfall` | $$ | Tries providers in order, stops at first confident verdict. |

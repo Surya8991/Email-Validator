@@ -48,6 +48,17 @@ async def validate(
         return "unknown", {}
 
     if strategy == "bouncify_only":
+        # Free local pre-filter: skip the paid Bouncify credit for emails
+        # that are objectively invalid (bad syntax or no MX/A record).
+        # Bouncify charges 1 credit per call and would return `invalid` for
+        # those too, so this is pure savings with no accuracy loss. Local
+        # is in the registry whether or not it was selected — using it here
+        # as a free gate doesn't break the "only Bouncify" intent.
+        local = providers.get("local")
+        if local:
+            local_result = await local.verify(email)
+            if local_result.status == "invalid":
+                return "invalid", {"local": local_result}
         p = selected.get("bouncify") or next(iter(selected.values()))
         result = await p.verify(email)
         return result.status, {p.name: result}

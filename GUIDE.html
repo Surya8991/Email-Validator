@@ -565,7 +565,7 @@ invalid-email,Charlie,manual</code></pre>
     <h2><span class="num">11</span> Strategies</h2>
     <table>
       <tr><th>Strategy</th><th>Cost</th><th>How it works</th><th>Best for</th></tr>
-      <tr><td>bouncify_only</td><td>$</td><td>Calls Bouncify only. 1 credit per email.</td><td>Quick checks on reasonably clean lists</td></tr>
+      <tr><td>bouncify_only</td><td>$</td><td>Free local syntax+MX pre-filter; if local says invalid, no Bouncify call. Otherwise 1 credit per email.</td><td>Default. Quick checks; saves credits even on dirty lists.</td></tr>
       <tr><td>local_first</td><td>¢</td><td>Runs free local checks first (syntax, MX, disposable). Only calls paid API if local doesn't clearly mark it invalid.</td><td>Dirty lists with lots of obvious invalids — saves 30-50% credits</td></tr>
       <tr><td>consensus</td><td>$$$</td><td>Calls all enabled providers in parallel. Takes majority vote on verdict.</td><td>High-value lists where accuracy matters more than cost</td></tr>
       <tr><td>waterfall</td><td>$$</td><td>Tries local → Hunter → Bouncify → ZeroBounce in order. Stops at first confident result.</td><td>Balancing accuracy and cost on medium lists</td></tr>
