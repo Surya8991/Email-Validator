@@ -1,5 +1,8 @@
 # Email Validator
 
+[![Keep Warm](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml)
+[![Bulk Email Validation](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml)
+
 A multi-provider email validation web app with auth, teams, and an admin panel. Validates single emails or bulk CSVs using Bouncify, ZeroBounce, NeverBounce, Hunter.io, and a free local stack — with caching, analytics, and a clean UI.
 
 ---
