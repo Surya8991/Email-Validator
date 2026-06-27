@@ -24,6 +24,12 @@ _DASHBOARD_CACHE: dict = {"ts": 0.0, "data": None}
 _DASHBOARD_TTL = 30.0
 
 
+_JOB_LIST_COLS = (
+    Job.id, Job.status, Job.total, Job.processed, Job.created_at,
+    Job.filename, Job.strategy, Job.error,
+)
+
+
 def _dashboard_aggregates() -> dict:
     """Run the dashboard's COUNT queries. Cheap on warm Neon, slow when cold —
     so we cache the result briefly and let callers use asyncio.to_thread to
@@ -34,14 +40,17 @@ def _dashboard_aggregates() -> dict:
         verdict_rows = session.execute(text(
             "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
         )).fetchall()
-        recent_jobs = session.exec(
-            select(Job).order_by(Job.id.desc()).limit(5)  # type: ignore[arg-type]
+        # Project columns explicitly — DO NOT select the full Job row.
+        # Job.csv_data holds the entire uploaded CSV (can be MB per row);
+        # SELECT * across 5-50 rows fetched all of it and 504'd /jobs and /
+        # on cold-Neon. Listing pages never read csv_data, only the worker does.
+        recent_rows = session.execute(
+            select(*_JOB_LIST_COLS).order_by(Job.id.desc()).limit(5)  # type: ignore[arg-type]
         ).all()
-        # Materialize before the session closes.
         recent = [
-            {"id": j.id, "status": j.status, "total": j.total, "processed": j.processed,
-             "created_at": j.created_at, "filename": j.filename, "strategy": j.strategy}
-            for j in recent_jobs
+            {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
+             "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7]}
+            for r in recent_rows
         ]
     return {
         "total_results": total_results,
@@ -267,10 +276,29 @@ async def settings_page(request: Request, current_user: User = Depends(require_a
     })
 
 
+def _list_jobs_lightweight() -> list[dict]:
+    """Same column-projection pattern as the dashboard. Keeps csv_data on Neon."""
+    with Session(engine) as session:
+        rows = session.execute(
+            select(*_JOB_LIST_COLS).order_by(Job.id.desc()).limit(50)  # type: ignore[arg-type]
+        ).all()
+    return [
+        {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
+         "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7]}
+        for r in rows
+    ]
+
+
 @router.get("/jobs", response_class=HTMLResponse)
 async def jobs_list(request: Request, current_user: User = Depends(require_auth)):
-    with Session(engine) as session:
-        jobs = session.exec(select(Job).order_by(Job.id.desc()).limit(50)).all()  # type: ignore[arg-type]
+    # Wrap with same 6s ceiling as the dashboard. Cold Neon + a SELECT * that
+    # used to pull csv_data was 504-ing this page on every cold start.
+    try:
+        jobs = await asyncio.wait_for(
+            asyncio.to_thread(_list_jobs_lightweight), timeout=6.0,
+        )
+    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+        jobs = []
     return templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs,
         "active_page": "jobs",
@@ -281,12 +309,19 @@ async def jobs_list(request: Request, current_user: User = Depends(require_auth)
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_detail(request: Request, job_id: int, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        # Same reason — never load Job.csv_data for the detail page either.
+        row = session.execute(
+            select(*_JOB_LIST_COLS).where(Job.id == job_id)
+        ).first()
         results = session.exec(
             select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
-        ).all()
-    if not job:
+        ).all() if row else []
+    if not row:
         return HTMLResponse("Job not found", status_code=404)
+    job = {
+        "id": row[0], "status": row[1], "total": row[2], "processed": row[3],
+        "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
+    }
     parsed = []
     for r in results:
         try:
@@ -306,11 +341,18 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
 
 @router.get("/jobs/{job_id}/status", response_class=HTMLResponse)
 async def job_status_partial(request: Request, job_id: int):
+    # Polled every 2s while a job is queued/running — must NOT load csv_data.
     with Session(engine) as session:
-        job = session.get(Job, job_id)
-    if not job:
+        row = session.execute(
+            select(*_JOB_LIST_COLS).where(Job.id == job_id)
+        ).first()
+    if not row:
         return HTMLResponse("")
-    pct = int((job.processed / job.total * 100) if job.total else 0)
+    job = {
+        "id": row[0], "status": row[1], "total": row[2], "processed": row[3],
+        "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
+    }
+    pct = int((job["processed"] / job["total"] * 100) if job["total"] else 0)
     return templates.TemplateResponse(
         request, "partials/job_progress.html", {"job": job, "pct": pct}
     )
