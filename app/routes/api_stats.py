@@ -1,12 +1,17 @@
+import csv
+import io
 from collections import defaultdict
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
+from app.auth import require_auth
 from app.core.cache import purge_expired
 from app.db import engine, is_postgres
-from app.models import EmailCache, EmailResult
+from app.models import EmailCache, EmailResult, User
 
 router = APIRouter()
 
@@ -76,6 +81,40 @@ def get_stats():
 def purge_cache():
     count = purge_expired()
     return {"purged": count}
+
+
+@router.get("/api/cache/export")
+def export_cache(q: str = "", current_user: User = Depends(require_auth)):
+    """Stream the cache table as CSV. Honors the same `q` search filter as the browser."""
+    with Session(engine) as session:
+        query = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+        if q:
+            query = query.where(EmailCache.email.contains(q))
+        rows = session.exec(query).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "email", "verdict", "providers_used", "strategy",
+        "validated_at", "expires_at",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.email,
+            r.verdict,
+            r.providers_used,
+            r.strategy,
+            r.validated_at.isoformat() if r.validated_at else "",
+            r.expires_at.isoformat() if r.expires_at else "",
+        ])
+
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"email-cache-{stamp}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete("/api/cache/{cache_id}")

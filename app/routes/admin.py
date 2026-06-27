@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import io
 import json
 import secrets
 from collections import defaultdict
@@ -7,7 +9,7 @@ from pathlib import Path
 
 import bcrypt
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlmodel import Session, select
@@ -719,6 +721,53 @@ async def admin_audit_log(
         "action_filter": action_filter,
         "limit": limit,
     })
+
+
+@router.get("/audit-log/export")
+async def admin_audit_log_export(
+    action_filter: str = "",
+    current_user: User = Depends(require_admin),
+):
+    """Export the audit log as CSV. Honors the same action filter as the browser."""
+    with Session(engine) as db:
+        q = select(AuditLog).order_by(AuditLog.created_at.desc())  # type: ignore[arg-type]
+        if action_filter:
+            q = q.where(AuditLog.action.contains(action_filter))
+        logs = db.exec(q).all()
+        # Snapshot to plain tuples BEFORE commit — commit expires ORM attributes.
+        rows_data = [
+            (
+                log.created_at.isoformat() if log.created_at else "",
+                log.action,
+                log.actor_email,
+                log.target_type,
+                log.target_id,
+                log.details,
+            )
+            for log in logs
+        ]
+        _log_audit(
+            "audit.export", current_user, "audit_log", "",
+            f"action_filter={action_filter} rows={len(rows_data)}", db,
+        )
+        db.commit()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "created_at", "action", "actor_email",
+        "target_type", "target_id", "details",
+    ])
+    for row in rows_data:
+        writer.writerow(row)
+
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"audit-log-{stamp}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── A3: Session Manager (superadmin only) ─────────────────────────────────────

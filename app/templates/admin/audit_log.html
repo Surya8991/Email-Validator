@@ -9,6 +9,10 @@
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Audit Log</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">All admin actions — {{ total }} total events</p>
     </div>
+    <a href="/admin/audit-log/export{% if action_filter %}?action_filter={{ action_filter }}{% endif %}"
+      class="btn-ghost border border-gray-200 dark:border-gray-700 text-indigo-600 hover:text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30">
+      ⬇ Export CSV
+    </a>
   </div>
 
   <!-- Filter bar -->
