@@ -47,14 +47,26 @@ def _upload_dir() -> str:
     return "uploads"
 
 
-async def _trigger_github_actions(job_id: int, cache_ttl_days: int | None = None) -> bool:
-    """Trigger bulk_process.yml workflow_dispatch for this job. Returns True on success."""
-    if not settings.github_pat or not settings.github_repo:
-        return False
+_DISPATCH_HINTS = {
+    401: "PAT is rejected (401). Token is invalid or expired — generate a new one.",
+    403: "PAT lacks scope (403). Classic PAT needs `workflow` (+ `repo`); fine-grained PAT needs `Actions: Read and write` on this repo.",
+    404: "Workflow or repo not found (404). Confirm GITHUB_REPO is `owner/repo` exactly, and that the fine-grained PAT lists this specific repo.",
+    422: "Bad inputs (422). Default branch is probably not `main`, or an input is missing — see the body.",
+}
+
+
+async def _trigger_github_actions(
+    job_id: int, cache_ttl_days: int | None = None,
+) -> tuple[bool, str | None]:
+    """Dispatch the bulk_process workflow. Returns (ok, error_for_ui)."""
+    if not settings.github_pat:
+        return False, "GITHUB_PAT env var is not set on Vercel."
+    if not settings.github_repo:
+        return False, "GITHUB_REPO env var is not set on Vercel."
     try:
         owner, repo = settings.github_repo.split("/", 1)
     except ValueError:
-        return False
+        return False, f"GITHUB_REPO={settings.github_repo!r} is malformed (need owner/repo)."
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/bulk_process.yml/dispatches"
     inputs: dict[str, str] = {"job_id": str(job_id)}
     if cache_ttl_days is not None:
@@ -70,15 +82,17 @@ async def _trigger_github_actions(job_id: int, cache_ttl_days: int | None = None
                 },
                 json={"ref": "main", "inputs": inputs},
             )
-        if resp.status_code != 204:
-            logger.warning(
-                "GitHub Actions dispatch returned %s for job %s: %s",
-                resp.status_code, job_id, resp.text[:300],
-            )
-        return resp.status_code == 204
+        if resp.status_code == 204:
+            return True, None
+        body = resp.text[:200].replace("\n", " ")
+        hint = _DISPATCH_HINTS.get(resp.status_code, "See the body and GitHub docs.")
+        msg = f"GitHub API returned {resp.status_code}. {hint} Body: {body}"
+        logger.warning("dispatch failed for job %s: %s", job_id, msg)
+        return False, msg
     except Exception as e:  # noqa: BLE001
-        logger.warning("GitHub Actions dispatch failed for job %s: %s", job_id, e)
-        return False
+        msg = f"GitHub API call raised {type(e).__name__}: {e}"
+        logger.warning("dispatch raised for job %s: %s", job_id, msg)
+        return False, msg
 
 
 async def _dispatch_then_fallback(
@@ -86,7 +100,8 @@ async def _dispatch_then_fallback(
     providers: list[str], strategy: str, ttl: int | None,
 ) -> None:
     """Background task: try GitHub Actions first; if that fails, run in-process."""
-    if await _trigger_github_actions(job_id):
+    ok, _ = await _trigger_github_actions(job_id)
+    if ok:
         return
     logger.info("GitHub Actions unavailable for job %s — falling back to in-process", job_id)
     await process_bulk_job(job_id, filepath, email_column, providers, strategy, ttl)
@@ -165,29 +180,15 @@ async def create_bulk_job(
     # GitHub's API, typically <1s) before returning. The in-process fallback
     # is only useful locally where the server stays alive; on Vercel it would
     # be killed mid-run anyway.
-    triggered = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
+    triggered, dispatch_error = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
     response_status = "queued"
     if not triggered:
         if os.getenv("VERCEL"):
             # On Vercel the in-process fallback can't run (function is killed
             # the moment we return). A silent `queued` row hangs in the UI
-            # forever — mark the job `failed` with an actionable message so
-            # the operator can see WHY it didn't dispatch instead of staring
-            # at a phantom queue.
-            if not settings.github_pat:
-                reason = (
-                    "Auto-dispatch is not configured: GITHUB_PAT env var is "
-                    "not set on Vercel. Add a PAT with `workflow` scope and "
-                    "redeploy, then re-upload."
-                )
-            elif not settings.github_repo:
-                reason = "GITHUB_REPO env var is not set on Vercel."
-            else:
-                reason = (
-                    "GitHub Actions dispatch failed (non-204 from the API). "
-                    "Check the PAT scopes (`workflow` + `repo`) and that the "
-                    "default branch is `main`. See Vercel logs for the body."
-                )
+            # forever — mark the job `failed` with the exact reason returned
+            # by GitHub so the operator can fix it without diving into logs.
+            reason = dispatch_error or "GitHub Actions dispatch failed (no reason captured)."
             logger.warning("Job %s: %s", job_id, reason)
             with Session(engine) as session:
                 job = session.get(Job, job_id)
