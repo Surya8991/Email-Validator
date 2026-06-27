@@ -57,7 +57,7 @@ async def _trigger_github_actions(job_id: int) -> bool:
         return False
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/bulk_process.yml/dispatches"
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(
                 url,
                 headers={
@@ -151,13 +151,27 @@ async def create_bulk_job(
 
     ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
 
-    # Run trigger-or-fallback OUT OF BAND so the response returns immediately.
-    # Otherwise a slow GitHub API call + cold-start latency burns the 10s
-    # Vercel Hobby budget and the request 504s before the user sees a job id.
-    background_tasks.add_task(
-        _dispatch_then_fallback,
-        job_id, filepath, email_column, providers.split(","), strategy, ttl,
-    )
+    # IMPORTANT: on Vercel serverless, the function process is terminated as
+    # soon as the response is sent — FastAPI BackgroundTasks added at that
+    # point do NOT reliably run. So we dispatch INLINE (a fast HTTP POST to
+    # GitHub's API, typically <1s) before returning. The in-process fallback
+    # is only useful locally where the server stays alive; on Vercel it would
+    # be killed mid-run anyway.
+    triggered = await _trigger_github_actions(job_id)
+    if not triggered:
+        if os.getenv("VERCEL"):
+            logger.warning(
+                "Job %s queued but GitHub Actions dispatch failed. "
+                "Check GITHUB_PAT / GITHUB_REPO env vars on Vercel.",
+                job_id,
+            )
+        else:
+            # Local dev: BackgroundTasks survives because uvicorn keeps the
+            # process alive after the response. Use it as a fallback worker.
+            background_tasks.add_task(
+                process_bulk_job, job_id, filepath, email_column,
+                providers.split(","), strategy, ttl,
+            )
 
     return BulkJobResponse(job_id=job_id, total=0, status="queued")
 
