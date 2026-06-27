@@ -41,7 +41,7 @@
         {% for log in logs %}
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
           <td class="px-5 py-3 text-xs text-gray-400 whitespace-nowrap">
-            {{ log.created_at.strftime('%b %d, %H:%M') }}
+            {{ log.created_at | ist('%b %d, %H:%M') }}
           </td>
           <td class="px-5 py-3">
             <span class="font-mono text-xs px-2 py-0.5 rounded

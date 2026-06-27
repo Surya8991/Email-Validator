@@ -50,10 +50,10 @@
             {% endif %}
           </td>
           <td class="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
-            {{ s.created_at.strftime('%b %d, %Y %H:%M') if s.created_at else '—' }}
+            {{ s.created_at | ist('%b %d, %Y %H:%M') if s.created_at else '—' }}
           </td>
           <td class="px-5 py-3.5 text-xs text-gray-500 dark:text-gray-400">
-            {{ s.expires_at.strftime('%b %d, %Y %H:%M') }}
+            {{ s.expires_at | ist('%b %d, %Y %H:%M') }}
           </td>
           <td class="px-5 py-3.5 text-right">
             {% if u.id != current_user.id %}

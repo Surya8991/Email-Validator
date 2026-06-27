@@ -40,7 +40,7 @@
             </div>
           </td>
           <td class="px-5 py-3.5 text-xs text-gray-400">
-            Requested {{ row.membership.requested_at.strftime('%b %d, %Y') }}
+            Requested {{ row.membership.requested_at | ist('%b %d, %Y') }}
           </td>
           <td class="px-5 py-3.5">
             <div class="flex items-center gap-3 justify-end">
@@ -83,7 +83,7 @@
                   {% endif %}
                 </div>
                 {% if row.membership.approved_at %}
-                <div class="text-xs text-gray-400">Joined {{ row.membership.approved_at.strftime('%b %d, %Y') }}</div>
+                <div class="text-xs text-gray-400">Joined {{ row.membership.approved_at | ist('%b %d, %Y') }}</div>
                 {% endif %}
               </div>
             </div>

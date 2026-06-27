@@ -49,7 +49,7 @@
             {{ emails_processed.get(u.id, 0) }}
           </td>
           <td class="px-5 py-3.5 text-gray-500 dark:text-gray-400 text-xs">
-            {{ u.last_login.strftime('%b %d, %Y %H:%M') if u.last_login else '—' }}
+            {{ u.last_login | ist('%b %d, %Y %H:%M') if u.last_login else '—' }}
           </td>
         </tr>
         {% else %}

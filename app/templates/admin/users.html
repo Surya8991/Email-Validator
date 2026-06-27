@@ -116,7 +116,7 @@
               <span class="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs font-semibold px-2 py-0.5 rounded-full">user</span>
             {% endif %}
           </td>
-          <td class="px-5 py-3 text-xs text-gray-400">Expires {{ inv.expires_at.strftime('%b %d, %Y') }}</td>
+          <td class="px-5 py-3 text-xs text-gray-400">Expires {{ inv.expires_at | ist('%b %d, %Y') }}</td>
           <td class="px-5 py-3 text-right">
             <form method="post" action="/admin/invites/{{ inv.id }}/revoke">
               <button type="submit" class="text-xs text-red-500 hover:underline font-medium">Revoke</button>
@@ -153,7 +153,7 @@
               <div>
                 <span class="font-medium text-gray-900 dark:text-white">{{ u.email }}</span>
                 {% if u.last_login %}
-                <p class="text-xs text-gray-400">Last login {{ u.last_login.strftime('%b %d') }}</p>
+                <p class="text-xs text-gray-400">Last login {{ u.last_login | ist('%b %d') }}</p>
                 {% endif %}
               </div>
             </div>
@@ -192,7 +192,7 @@
             {% endif %}
           </td>
           <td class="px-5 py-3.5 text-gray-500 dark:text-gray-400 text-xs">
-            {{ u.created_at.strftime('%b %d, %Y') if u.created_at else '—' }}
+            {{ u.created_at | ist('%b %d, %Y') if u.created_at else '—' }}
           </td>
           <td class="px-5 py-3.5">
             <div class="flex items-center gap-2 justify-end flex-wrap">

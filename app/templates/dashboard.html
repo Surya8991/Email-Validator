@@ -110,7 +110,7 @@
             {% elif job.status == 'failed' %}<span class="badge-invalid">failed</span>
             {% else %}<span class="badge-unknown">{{ job.status }}</span>{% endif %}
           </td>
-          <td class="px-4 py-3 text-xs text-gray-400">{{ job.created_at.strftime('%m-%d %H:%M') }}</td>
+          <td class="px-4 py-3 text-xs text-gray-400">{{ job.created_at | ist('%m-%d %H:%M') }}</td>
           <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-indigo-500 hover:underline text-xs">View</a></td>
         </tr>
         {% endfor %}

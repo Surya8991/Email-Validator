@@ -10,7 +10,6 @@ from pathlib import Path
 import bcrypt
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
@@ -36,11 +35,11 @@ from app.models import (
     UserSession,
 )
 from app.providers.registry import get_enabled_providers
+from app.templating import templates
 
 INVITE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/admin")
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _log_audit(

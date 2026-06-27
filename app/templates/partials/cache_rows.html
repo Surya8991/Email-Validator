@@ -20,9 +20,9 @@
       <td class="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300 max-w-64 truncate">{{ row.email }}</td>
       <td class="px-4 py-3"><span class="badge-{{ row.verdict }}">{{ row.verdict }}</span></td>
       <td class="px-4 py-3 text-xs text-gray-400">{{ row.providers_used }}</td>
-      <td class="px-4 py-3 text-xs text-gray-400">{{ row.validated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td class="px-4 py-3 text-xs text-gray-400">{{ row.validated_at | ist('%Y-%m-%d %H:%M') }}</td>
       <td class="px-4 py-3 text-xs {{ 'text-red-400' if row.expires_at < now else 'text-gray-400' }}">
-        {{ row.expires_at.strftime('%Y-%m-%d') }}
+        {{ row.expires_at | ist('%Y-%m-%d') }}
         {% if row.expires_at < now %}<span class="ml-1 text-red-400">(expired)</span>{% endif %}
       </td>
       <td class="px-4 py-3">

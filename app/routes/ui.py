@@ -7,9 +7,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, text
 from sqlmodel import Session, select
+
+from app.templating import templates
 
 from app.auth import require_auth
 from app.config import settings
@@ -60,7 +61,6 @@ def _dashboard_aggregates() -> dict:
     }
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 _STRATEGIES = [
     {

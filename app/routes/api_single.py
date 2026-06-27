@@ -4,7 +4,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -12,9 +11,9 @@ from app.auth import get_current_user
 from app.core.validator import validate_with_cache
 from app.db import engine
 from app.schemas import ProviderResult, SingleVerifyRequest, SingleVerifyResponse
+from app.templating import templates
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _confidence(verdict: str, providers: dict[str, ProviderResult]) -> int:

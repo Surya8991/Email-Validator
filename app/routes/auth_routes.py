@@ -8,7 +8,6 @@ from pathlib import Path
 import bcrypt
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.auth import (
@@ -26,6 +25,7 @@ from app.services.email import (
     send_password_reset_email,
     send_pending_approval_notice,
 )
+from app.templating import templates
 
 logger = logging.getLogger(__name__)
 PASSWORD_RESET_TTL_MINUTES = 30
@@ -35,7 +35,6 @@ LOGIN_MAX_FAILS = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def _hash_password(password: str) -> str:
