@@ -1,4 +1,6 @@
+import asyncio
 import json
+import time
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +16,39 @@ from app.config import settings
 from app.db import engine, is_postgres
 from app.models import EmailCache, EmailResult, Job, Team, TeamMembership, User
 from app.providers.registry import get_enabled_providers
+
+# Short-lived in-memory cache for the dashboard's expensive aggregate queries.
+# 30s TTL is enough that consecutive loads (e.g. browser-tab reopen, navigation)
+# don't re-COUNT the whole tables, but fresh enough that numbers feel live.
+_DASHBOARD_CACHE: dict = {"ts": 0.0, "data": None}
+_DASHBOARD_TTL = 30.0
+
+
+def _dashboard_aggregates() -> dict:
+    """Run the dashboard's COUNT queries. Cheap on warm Neon, slow when cold —
+    so we cache the result briefly and let callers use asyncio.to_thread to
+    parallelize multiple stat lookups when needed."""
+    with Session(engine) as session:
+        total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
+        total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        verdict_rows = session.execute(text(
+            "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
+        )).fetchall()
+        recent_jobs = session.exec(
+            select(Job).order_by(Job.id.desc()).limit(5)  # type: ignore[arg-type]
+        ).all()
+        # Materialize before the session closes.
+        recent = [
+            {"id": j.id, "status": j.status, "total": j.total, "processed": j.processed,
+             "created_at": j.created_at, "filename": j.filename, "strategy": j.strategy}
+            for j in recent_jobs
+        ]
+    return {
+        "total_results": total_results,
+        "total_cache": total_cache,
+        "verdict_counts": {r[0]: r[1] for r in verdict_rows},
+        "recent_jobs": recent,
+    }
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -52,26 +87,33 @@ _STRATEGIES = [
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, current_user: User = Depends(require_auth)):
-    with Session(engine) as session:
-        total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
+    now = time.monotonic()
+    if _DASHBOARD_CACHE["data"] is not None and (now - _DASHBOARD_CACHE["ts"]) < _DASHBOARD_TTL:
+        agg = _DASHBOARD_CACHE["data"]
+    else:
+        # Run the blocking aggregates off the event loop with a hard ceiling.
+        # If they don't finish (cold DB + Vercel 10s budget), serve placeholders
+        # rather than 504. The next request that lands after the DB has warmed
+        # up will populate the cache for everyone.
+        try:
+            agg = await asyncio.wait_for(asyncio.to_thread(_dashboard_aggregates), timeout=6.0)
+            _DASHBOARD_CACHE["ts"] = now
+            _DASHBOARD_CACHE["data"] = agg
+        except Exception:
+            agg = _DASHBOARD_CACHE["data"] or {
+                "total_results": 0, "total_cache": 0,
+                "verdict_counts": {}, "recent_jobs": [],
+            }
 
-        verdict_rows = session.execute(text(
-            "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
-        )).fetchall()
-        verdict_counts = {r[0]: r[1] for r in verdict_rows}
-
-        recent_jobs = session.exec(
-            select(Job).order_by(Job.id.desc()).limit(5)  # type: ignore[arg-type]
-        ).all()
-
+    total_results = agg["total_results"]
+    total_cache = agg["total_cache"]
     cache_rate = round(total_cache / total_results * 100, 1) if total_results > 0 else 0
     return templates.TemplateResponse(request, "dashboard.html", {
         "total_results": total_results,
         "total_cache": total_cache,
         "cache_rate": cache_rate,
-        "verdict_counts": verdict_counts,
-        "recent_jobs": recent_jobs,
+        "verdict_counts": agg["verdict_counts"],
+        "recent_jobs": agg["recent_jobs"],
         "enabled_providers": get_enabled_providers(),
         "active_page": "dashboard",
         "current_user": current_user,
