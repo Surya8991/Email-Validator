@@ -51,5 +51,16 @@ class Settings(BaseSettings):
     # Can be an existing user or will be created (requires admin_password)
     superadmin_email: str = ""
 
+    # ── SMTP (outbound mail for invites etc.) ─────────────────────────────────
+    # Leave smtp_host blank to disable email sending (invite link still shown in UI)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True  # STARTTLS on port 587; ignored when port=465 (uses SSL)
+    smtp_from: str = ""        # e.g. "no-reply@edstellar.com" (defaults to smtp_user)
+    smtp_from_name: str = "Email Validator"
+    smtp_timeout: float = 15.0
+
 
 settings = Settings()

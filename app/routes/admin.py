@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from app.auth import require_admin, require_superadmin
 from app.config import settings
 from app.db import engine, is_postgres
+from app.services.email import send_account_approved_email, send_invite_email
 from app.models import (
     ApiUsage,
     AuditLog,
@@ -184,6 +185,7 @@ async def admin_users(
     invite_url = request.query_params.get("invite_url")
     invite_email = request.query_params.get("invite_email")
     invite_error = request.query_params.get("invite_error")
+    invite_mail = request.query_params.get("invite_mail")
     return templates.TemplateResponse(request, "admin/users.html", {
         **_admin_ctx("users", current_user),
         "users": users,
@@ -193,6 +195,7 @@ async def admin_users(
         "invite_url": invite_url,
         "invite_email": invite_email,
         "invite_error": invite_error,
+        "invite_mail": invite_mail,
         "val_counts": val_counts,
         "q": q,
         "role_filter": role_filter,
@@ -231,15 +234,28 @@ async def admin_create_user(
 
 @router.post("/users/{user_id}/activate")
 async def admin_activate_user(
+    request: Request,
     user_id: int,
     current_user: User = Depends(require_admin),
 ):
+    notify_email = None
+    was_inactive = False
     with Session(engine) as db:
         user = db.get(User, user_id)
         if user:
+            was_inactive = not user.is_active
             user.is_active = True
             _log_audit("user.activate", current_user, "user", str(user_id), user.email, db)
             db.commit()
+            notify_email = user.email
+
+    if was_inactive and notify_email and settings.smtp_host:
+        base_url = str(request.base_url).rstrip("/")
+        try:
+            await send_account_approved_email(notify_email, f"{base_url}/login")
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("Approval email failed: %s", e)
     return RedirectResponse(url="/admin/users", status_code=302)
 
 
@@ -323,8 +339,29 @@ async def admin_send_invite(
 
     base_url = str(request.base_url).rstrip("/")
     invite_url = f"{base_url}/invite/{raw_token}"
+
+    # Try to deliver the invite via SMTP. If SMTP isn't configured or sending
+    # fails, we still surface the link in the UI so the admin can hand-deliver.
+    mail_status = "skipped"
+    if settings.smtp_host:
+        try:
+            await send_invite_email(
+                to_email=email,
+                invite_url=invite_url,
+                role=role,
+                inviter_email=current_user.email,
+            )
+            mail_status = "sent"
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("Invite email send failed: %s", e)
+            mail_status = "failed"
+
     return RedirectResponse(
-        url=f"/admin/users?invite_url={invite_url}&invite_email={email}",
+        url=(
+            f"/admin/users?invite_url={invite_url}"
+            f"&invite_email={email}&invite_mail={mail_status}"
+        ),
         status_code=302,
     )
 

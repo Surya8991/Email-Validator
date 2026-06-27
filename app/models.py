@@ -107,3 +107,12 @@ class UserInvite(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
     used_at: datetime | None = None
+
+
+class PasswordReset(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    token_hash: str = Field(index=True, unique=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    used_at: datetime | None = None
