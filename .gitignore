@@ -22,3 +22,9 @@ htmlcov/
 .vercel/
 node_modules/
 .superpowers/
+
+# Local data & ad-hoc scripts (never push)
+contacts_*.csv
+validation_results.json
+validate_bouncify.py
+validate_contacts.py
