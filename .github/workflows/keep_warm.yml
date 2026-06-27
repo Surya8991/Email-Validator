@@ -14,9 +14,10 @@ name: Keep Warm
 
 on:
   schedule:
-    # Every 4 minutes. GitHub Actions cron has jitter (sometimes 5-15 min
-    # late on free tier), so 4 keeps us comfortably under Neon's 5-min pause.
-    - cron: "*/4 * * * *"
+    # Every 3 minutes. GitHub Actions free-tier cron can drift 5-15 minutes
+    # late, so we schedule tighter than Neon's 5-min auto-pause threshold to
+    # absorb that jitter and still keep the DB awake.
+    - cron: "*/3 * * * *"
   workflow_dispatch:  # manual run button
 
 concurrency:
