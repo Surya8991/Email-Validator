@@ -11,10 +11,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from app.auth import SESSION_COOKIE, SESSION_TTL_DAYS, create_user_session, delete_user_session
+from app.auth import (
+    SESSION_COOKIE,
+    SESSION_TTL_DAYS,
+    create_user_session,
+    delete_user_session,
+    require_auth,
+)
 from app.config import settings
 from app.db import get_session
-from app.models import PasswordReset, SystemSetting, User, UserInvite
+from app.models import PasswordReset, SystemSetting, User, UserInvite, UserSession
 from app.services.email import (
     send_account_approved_email,
     send_password_reset_email,
@@ -23,6 +29,10 @@ from app.services.email import (
 
 logger = logging.getLogger(__name__)
 PASSWORD_RESET_TTL_MINUTES = 30
+
+# Login rate limit: N consecutive failures locks the account for LOCKOUT_MINUTES.
+LOGIN_MAX_FAILS = 5
+LOGIN_LOCKOUT_MINUTES = 15
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -49,7 +59,22 @@ async def login_post(
     db: Session = Depends(get_session),
 ):
     user = db.exec(select(User).where(User.email == email.strip().lower())).first()
+    now = datetime.utcnow()
+
+    # If the account is locked, refuse before checking the password.
+    if user and user.locked_until and user.locked_until > now:
+        mins_left = max(1, int((user.locked_until - now).total_seconds() // 60))
+        return templates.TemplateResponse(request, "auth/login.html", {
+            "error": f"Too many failed attempts. Try again in {mins_left} minute(s).",
+        }, status_code=429)
+
     if not user or not _verify_password(password, user.password_hash):
+        if user:
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if user.failed_login_count >= LOGIN_MAX_FAILS:
+                user.locked_until = now + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+                user.failed_login_count = 0
+            db.commit()
         return templates.TemplateResponse(request, "auth/login.html", {
             "error": "Invalid email or password."
         }, status_code=401)
@@ -58,8 +83,11 @@ async def login_post(
             "error": "Your account is pending admin approval."
         }, status_code=403)
 
+    # Successful login — clear lockout counter.
+    user.failed_login_count = 0
+    user.locked_until = None
     token = create_user_session(user, db)
-    user.last_login = datetime.utcnow()
+    user.last_login = now
     db.commit()
 
     resp = RedirectResponse(url="/", status_code=302)
@@ -132,6 +160,81 @@ async def register_post(
             logger.exception("Admin pending-approval notification failed: %s", e)
 
     return templates.TemplateResponse(request, "auth/register.html", {"success": True})
+
+
+@router.get("/profile", response_class=HTMLResponse)
+async def profile_page(
+    request: Request,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_session),
+):
+    sessions = db.exec(select(UserSession).where(UserSession.user_id == current_user.id)).all()
+    return templates.TemplateResponse(request, "auth/profile.html", {
+        "current_user": current_user,
+        "session_count": len(sessions),
+        "saved": request.query_params.get("saved"),
+        "error": request.query_params.get("err"),
+    })
+
+
+@router.post("/profile/email")
+async def profile_change_email(
+    request: Request,
+    new_email: str = Form(...),
+    current_password: str = Form(...),
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_session),
+):
+    new_email = new_email.strip().lower()
+    if not _verify_password(current_password, current_user.password_hash):
+        return RedirectResponse(url="/profile?err=bad_password", status_code=302)
+    if "@" not in new_email or "." not in new_email:
+        return RedirectResponse(url="/profile?err=invalid_email", status_code=302)
+    if new_email == current_user.email:
+        return RedirectResponse(url="/profile?saved=email", status_code=302)
+    clash = db.exec(select(User).where(User.email == new_email)).first()
+    if clash:
+        return RedirectResponse(url="/profile?err=email_taken", status_code=302)
+    current_user.email = new_email
+    db.commit()
+    return RedirectResponse(url="/profile?saved=email", status_code=302)
+
+
+@router.post("/profile/password")
+async def profile_change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_session),
+):
+    if not _verify_password(current_password, current_user.password_hash):
+        return RedirectResponse(url="/profile?err=bad_password", status_code=302)
+    if new_password != confirm_password:
+        return RedirectResponse(url="/profile?err=mismatch", status_code=302)
+    if len(new_password) < 8:
+        return RedirectResponse(url="/profile?err=too_short", status_code=302)
+    current_user.password_hash = _hash_password(new_password)
+    db.commit()
+    return RedirectResponse(url="/profile?saved=password", status_code=302)
+
+
+@router.post("/profile/sessions/revoke-all")
+async def profile_revoke_all_sessions(
+    request: Request,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_session),
+):
+    # Delete every session except the one making this request, so the user stays logged in here.
+    current_token = request.cookies.get(SESSION_COOKIE)
+    current_hash = hashlib.sha256(current_token.encode()).hexdigest() if current_token else None
+    sessions = db.exec(select(UserSession).where(UserSession.user_id == current_user.id)).all()
+    for s in sessions:
+        if s.token_hash != current_hash:
+            db.delete(s)
+    db.commit()
+    return RedirectResponse(url="/profile?saved=sessions", status_code=302)
 
 
 @router.post("/logout")

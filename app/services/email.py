@@ -155,6 +155,39 @@ async def send_account_approved_email(to_email: str, login_url: str) -> None:
     await send_email(to_email, subject, text, _shell("Account approved", body))
 
 
+async def send_team_join_decided_email(
+    to_email: str, team_name: str, decision: str, app_url: str
+) -> None:
+    approved = decision == "approved"
+    subject = f"Your request to join {team_name} was {'approved' if approved else 'declined'}"
+    text = (
+        f"Your request to join the team \"{team_name}\" was {decision}.\n\n"
+        + (f"Open the app: {app_url}\n" if approved else "")
+    )
+    if approved:
+        body = f"""
+        <p style="color:#4b5563;font-size:14px;line-height:1.5">
+          Good news — your request to join <strong>{team_name}</strong> was approved.
+          You're now an active member.
+        </p>
+        <p style="margin:24px 0">
+          <a href="{app_url}" style="background:#4f46e5;color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 20px;border-radius:10px;display:inline-block">
+            Open the app →
+          </a>
+        </p>
+        """
+        title = f"You're in: {team_name}"
+    else:
+        body = f"""
+        <p style="color:#4b5563;font-size:14px;line-height:1.5">
+          Your request to join <strong>{team_name}</strong> was declined.
+          If you think this was a mistake, reach out to a team owner or admin.
+        </p>
+        """
+        title = "Join request declined"
+    await send_email(to_email, subject, text, _shell(title, body))
+
+
 async def send_password_reset_email(to_email: str, reset_url: str, ttl_minutes: int) -> None:
     subject = "Reset your Email Validator password"
     text = (

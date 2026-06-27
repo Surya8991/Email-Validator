@@ -40,6 +40,9 @@ def create_db_tables() -> None:
 # Postgres-only; SQLite already creates everything fresh via create_all on /tmp.
 _PG_COLUMN_ADDS: list[tuple[str, str, str]] = [
     ('"user"', "validation_limit", "INTEGER"),
+    ("teammembership", "role", "VARCHAR DEFAULT 'member' NOT NULL"),
+    ('"user"', "failed_login_count", "INTEGER DEFAULT 0 NOT NULL"),
+    ('"user"', "locked_until", "TIMESTAMP"),
 ]
 
 
@@ -52,6 +55,51 @@ def _apply_lightweight_migrations() -> None:
             conn.execute(text(
                 f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
             ))
+
+
+def backfill_team_owners() -> None:
+    """For teams without any owner membership, create one from Team.created_by.
+
+    Idempotent — only inserts when no owner exists for a team. Run on startup.
+    """
+    from sqlmodel import Session, select
+    from app.models import Team, TeamMembership, User
+    with Session(engine) as db:
+        teams = db.exec(select(Team)).all()
+        for t in teams:
+            if t.created_by is None:
+                continue
+            existing_owner = db.exec(
+                select(TeamMembership).where(
+                    TeamMembership.team_id == t.id,
+                    TeamMembership.role == "owner",
+                )
+            ).first()
+            if existing_owner:
+                continue
+            creator = db.get(User, t.created_by)
+            if creator is None:
+                continue
+            # If the creator already has a non-owner membership, promote it; otherwise create one.
+            existing_m = db.exec(
+                select(TeamMembership).where(
+                    TeamMembership.team_id == t.id,
+                    TeamMembership.user_id == creator.id,
+                )
+            ).first()
+            if existing_m:
+                existing_m.role = "owner"
+                existing_m.status = "active"
+            else:
+                db.add(TeamMembership(
+                    team_id=t.id,
+                    user_id=creator.id,
+                    status="active",
+                    role="owner",
+                    approved_at=t.created_at,
+                    approved_by=creator.id,
+                ))
+        db.commit()
 
 
 def get_session():

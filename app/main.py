@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.auth import RequiresAdmin, RequiresAuth, RequiresMaintenance
 from app.config import settings
-from app.db import create_db_tables
+from app.db import backfill_team_owners, create_db_tables
 from app.providers import registry
 from app.routes import admin as admin_router
 from app.routes import api_bulk, api_single, api_stats, auth_routes, health, ui
@@ -67,6 +67,7 @@ def _bootstrap_admin() -> None:
 async def lifespan(app: FastAPI):
     create_db_tables()
     _bootstrap_admin()
+    backfill_team_owners()
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
     if registry._client and not registry._client.is_closed:

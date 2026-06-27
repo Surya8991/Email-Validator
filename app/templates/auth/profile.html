@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto py-10 px-4">
+
+  <div class="mb-8">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Your profile</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage your account settings.</p>
+  </div>
+
+  {% if saved == 'email' %}
+    <div class="mb-5 px-4 py-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-700 dark:text-green-300">✅ Email updated.</div>
+  {% elif saved == 'password' %}
+    <div class="mb-5 px-4 py-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-700 dark:text-green-300">✅ Password updated.</div>
+  {% elif saved == 'sessions' %}
+    <div class="mb-5 px-4 py-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-700 dark:text-green-300">✅ All other sessions signed out.</div>
+  {% endif %}
+
+  {% if error == 'bad_password' %}
+    <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">Current password is incorrect.</div>
+  {% elif error == 'email_taken' %}
+    <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">That email is already in use.</div>
+  {% elif error == 'invalid_email' %}
+    <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">Please enter a valid email address.</div>
+  {% elif error == 'mismatch' %}
+    <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">New passwords don't match.</div>
+  {% elif error == 'too_short' %}
+    <div class="mb-5 px-4 py-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">Password must be at least 8 characters.</div>
+  {% endif %}
+
+  <!-- Change email -->
+  <div class="card p-6 mb-5">
+    <h2 class="font-semibold text-gray-900 dark:text-white mb-1">Email address</h2>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">Currently signed in as <strong>{{ current_user.email }}</strong>.</p>
+    <form method="post" action="/profile/email" class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">New email</label>
+        <input type="email" name="new_email" required class="input-base w-full" placeholder="you@example.com"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Confirm with current password</label>
+        <input type="password" name="current_password" required class="input-base w-full"/>
+      </div>
+      <button type="submit" class="btn-primary">Update email</button>
+    </form>
+  </div>
+
+  <!-- Change password -->
+  <div class="card p-6 mb-5">
+    <h2 class="font-semibold text-gray-900 dark:text-white mb-4">Change password</h2>
+    <form method="post" action="/profile/password" class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Current password</label>
+        <input type="password" name="current_password" required class="input-base w-full"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">New password</label>
+        <input type="password" name="new_password" required minlength="8" class="input-base w-full" placeholder="At least 8 characters"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Confirm new password</label>
+        <input type="password" name="confirm_password" required minlength="8" class="input-base w-full"/>
+      </div>
+      <button type="submit" class="btn-primary">Update password</button>
+    </form>
+  </div>
+
+  <!-- Sessions -->
+  <div class="card p-6">
+    <h2 class="font-semibold text-gray-900 dark:text-white mb-1">Active sessions</h2>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+      You have <strong>{{ session_count }}</strong> active session{{ 's' if session_count != 1 else '' }} (including this device).
+    </p>
+    <form method="post" action="/profile/sessions/revoke-all"
+      onsubmit="return confirm('Sign out every other device? This device will stay logged in.')">
+      <button type="submit" class="text-sm font-medium text-red-600 dark:text-red-400 hover:underline">Sign out all other devices</button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

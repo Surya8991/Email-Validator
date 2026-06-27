@@ -15,7 +15,11 @@ from sqlmodel import Session, select
 from app.auth import require_admin, require_superadmin
 from app.config import settings
 from app.db import engine, is_postgres
-from app.services.email import send_account_approved_email, send_invite_email
+from app.services.email import (
+    send_account_approved_email,
+    send_invite_email,
+    send_team_join_decided_email,
+)
 from app.models import (
     ApiUsage,
     AuditLog,
@@ -499,9 +503,47 @@ async def admin_create_team(
     with Session(engine) as db:
         existing = db.exec(select(Team).where(Team.name == name)).first()
         if not existing:
-            db.add(Team(name=name, description=description.strip(), created_by=current_user.id))
+            team = Team(name=name, description=description.strip(), created_by=current_user.id)
+            db.add(team)
+            db.commit()
+            db.refresh(team)
+            # Creator is the team owner — auto-add as an active member with role="owner".
+            db.add(TeamMembership(
+                team_id=team.id,
+                user_id=current_user.id,
+                status="active",
+                role="owner",
+                approved_at=datetime.utcnow(),
+                approved_by=current_user.id,
+            ))
+            _log_audit("team.create", current_user, "team", str(team.id), team.name, db)
             db.commit()
     return RedirectResponse(url="/admin/teams", status_code=302)
+
+
+@router.post("/teams/{team_id}/edit")
+async def admin_edit_team(
+    team_id: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    current_user: User = Depends(require_admin),
+):
+    name = name.strip()
+    if not name:
+        return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    with Session(engine) as db:
+        team = db.get(Team, team_id)
+        if team:
+            # Block rename collisions with another team.
+            clash = db.exec(
+                select(Team).where(Team.name == name, Team.id != team_id)
+            ).first()
+            if not clash:
+                team.name = name
+            team.description = description.strip()
+            _log_audit("team.edit", current_user, "team", str(team_id), team.name, db)
+            db.commit()
+    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
 
 
 @router.get("/teams/{team_id}", response_class=HTMLResponse)
@@ -532,10 +574,29 @@ async def admin_team_detail(
     })
 
 
+async def _notify_team_decision(
+    request: Request, db: Session, team_id: int, user_id: int, decision: str
+) -> None:
+    if not settings.smtp_host:
+        return
+    user = db.get(User, user_id)
+    team = db.get(Team, team_id)
+    if not user or not team:
+        return
+    base_url = str(request.base_url).rstrip("/")
+    try:
+        await send_team_join_decided_email(user.email, team.name, decision, base_url)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("Team-join %s email failed: %s", decision, e)
+
+
 @router.post("/teams/{team_id}/approve/{membership_id}")
 async def admin_approve_membership(
-    team_id: int, membership_id: int, current_user: User = Depends(require_admin)
+    request: Request, team_id: int, membership_id: int,
+    current_user: User = Depends(require_admin),
 ):
+    notify_user_id = None
     with Session(engine) as db:
         m = db.get(TeamMembership, membership_id)
         if m and m.team_id == team_id and m.status == "pending":
@@ -543,18 +604,59 @@ async def admin_approve_membership(
             m.approved_at = datetime.utcnow()
             m.approved_by = current_user.id
             db.commit()
+            notify_user_id = m.user_id
+        if notify_user_id is not None:
+            await _notify_team_decision(request, db, team_id, notify_user_id, "approved")
     return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
 
 
 @router.post("/teams/{team_id}/reject/{membership_id}")
 async def admin_reject_membership(
-    team_id: int, membership_id: int, current_user: User = Depends(require_admin)
+    request: Request, team_id: int, membership_id: int,
+    current_user: User = Depends(require_admin),
 ):
+    notify_user_id = None
     with Session(engine) as db:
         m = db.get(TeamMembership, membership_id)
         if m and m.team_id == team_id and m.status == "pending":
             m.status = "rejected"
             db.commit()
+            notify_user_id = m.user_id
+        if notify_user_id is not None:
+            await _notify_team_decision(request, db, team_id, notify_user_id, "rejected")
+    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+
+
+@router.post("/teams/{team_id}/transfer/{user_id}")
+async def admin_transfer_team_ownership(
+    team_id: int, user_id: int, current_user: User = Depends(require_admin)
+):
+    with Session(engine) as db:
+        target = db.exec(
+            select(TeamMembership).where(
+                TeamMembership.team_id == team_id,
+                TeamMembership.user_id == user_id,
+                TeamMembership.status == "active",
+            )
+        ).first()
+        # Target must be an existing active member, and not already the owner.
+        if not target or target.role == "owner":
+            return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+
+        current_owner = db.exec(
+            select(TeamMembership).where(
+                TeamMembership.team_id == team_id,
+                TeamMembership.role == "owner",
+            )
+        ).first()
+        if current_owner:
+            current_owner.role = "member"
+        target.role = "owner"
+        _log_audit(
+            "team.transfer_ownership", current_user, "team", str(team_id),
+            f"new_owner_user_id={user_id}", db,
+        )
+        db.commit()
     return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
 
 
@@ -567,7 +669,8 @@ async def admin_remove_member(
             select(TeamMembership)
             .where(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
         ).first()
-        if m:
+        # Never silently remove the team owner — they must delete the team instead.
+        if m and m.role != "owner":
             db.delete(m)
             db.commit()
     return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)

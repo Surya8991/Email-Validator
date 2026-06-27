@@ -53,6 +53,8 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: datetime | None = None
     validation_limit: int | None = Field(default=None)  # monthly limit; None = unlimited
+    failed_login_count: int = Field(default=0)
+    locked_until: datetime | None = None
 
 
 class UserSession(SQLModel, table=True):
@@ -76,6 +78,7 @@ class TeamMembership(SQLModel, table=True):
     team_id: int = Field(foreign_key="team.id", index=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     status: str = Field(default="pending")  # "pending" | "active" | "rejected"
+    role: str = Field(default="member")     # "owner" | "member"
     requested_at: datetime = Field(default_factory=datetime.utcnow)
     approved_at: datetime | None = None
     approved_by: int | None = Field(default=None, foreign_key="user.id")
