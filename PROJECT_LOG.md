@@ -3,6 +3,10 @@
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
 > Last updated: 2026-06-27 (Session 12). Current VERSION: **0.9.3**
 
+> **Frequent main-branch pushes break Keep Warm.** Every push re-registers
+> the schedule and resets GitHub's 30-90 min activation delay. If
+> auto-runs vanish, stop pushing for an hour OR use UptimeRobot.
+
 ---
 
 ## 60-Second Resume
@@ -43,6 +47,7 @@
 - Use `socket` to check domain instead of `dnspython` — dnspython is already a dep and handles edge cases (NXDOMAIN vs timeout)
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
+- Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
 
 ---
 
@@ -690,12 +695,19 @@ Once a function instance is warm it serves everything fine — the issue is pure
 
 **Fix to ship (this session):** run the three startup ops in parallel via `asyncio.gather(...)` under a single 4s ceiling. Worst-case lifespan: 4s, not 12s. Sub-tasks that get cancelled run again on next cold start (idempotent).
 
-### 2. GitHub Actions cron is slow to start auto-firing on new schedules
-**Symptom:** `keep_warm.yml` was manually triggered and ran green, but auto-runs haven't appeared for 30+ minutes.
+### 2. GitHub Actions cron is slow to start auto-firing on new schedules — RESOLVED in 0.9.3
+**Symptom:** `keep_warm.yml` had zero `schedule` events for an hour+ even though manual `workflow_dispatch` runs all returned 200.
 
-**Diagnosis:** GitHub's free-tier scheduler delays newly-added scheduled workflows significantly (documented behavior). The schedule was tightened from `*/4` → `*/3` and offset off the hour grid (`1,4,7,...`) to help, but the initial activation delay isn't something we can short-circuit from code.
+**Root cause (two issues stacked):**
+1. **Cron was denser than GitHub honors.** The docs state a 5-minute minimum for scheduled workflows. Our cron was every 3 minutes (`1,4,7,...,58 * * * *`). GitHub silently coalesces and deprioritizes sub-5-min schedules on free-tier runners.
+2. **Every push to the default branch re-registers the schedule and resets its activation window.** We pushed 9 commits in one afternoon; each push bumped Keep Warm back to the queue.
 
-**Workaround:** keep manually triggering Keep Warm every ~10 min until the auto-cron starts. Or set up UptimeRobot as a redundant external pinger (covered in earlier session notes).
+**Fix:** cron is now `2,7,12,...,57 * * * *` — every **5 minutes**, offset by 2 from the hour grid. Comment in the workflow file explains the why so it doesn't get "tightened" back.
+
+**Activation delay is still real.** Even with a clean 5-min schedule, GitHub may take 30-90 min to start firing the first time after a default-branch push. If runs don't appear within 90 min, fall back to:
+- An external pinger (UptimeRobot free tier — 5-min pings, no setup, more reliable than GitHub cron).
+- Real user traffic, if the app is being used.
+- Don't push to `main` for an hour and check again.
 
 ### 3. Each new Vercel cold-start instance pays the full chain again
 **Diagnosis:** Vercel's serverless Python runtime spins fresh function instances on demand. Even with Neon warm, a brand new instance still has to: spin Python, import the app (~1s with our deps including openpyxl), and run lifespan. That's currently ~3-5s of overhead before request handling. Issue #1 above amplifies this.

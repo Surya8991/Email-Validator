@@ -1,24 +1,34 @@
 name: Keep Warm
 
-# Pings the deployed app every 4 minutes so Neon (free tier auto-pauses
+# Pings the deployed app on a schedule so Neon (free tier auto-pauses
 # after ~5 min) and the Vercel function (cold-starts after ~5 min idle)
 # stay warm. The /api/health endpoint runs a SELECT 1 against the DB,
 # so this wakes both layers in one shot.
 #
-# Cost: free. ~10s per run, ~75 min/month — well within GitHub Actions'
+# Cost: free. ~10s per run, ~30–40 min/month — well within GitHub Actions'
 # free quota for private repos (2000 min/month).
 #
 # Setup: add a repo variable APP_URL with your deployed origin, e.g.
 #   APP_URL = https://email-validator-lilac.vercel.app
 # Settings -> Secrets and variables -> Actions -> Variables tab -> New.
+#
+# Why every 5 min (and NOT every 3 min):
+#  GitHub Actions' documented minimum for `schedule:` is 5 minutes. Denser
+#  schedules (e.g. */3) are silently coalesced and tend to be deprioritized
+#  on free-tier runners — we saw this firsthand: ZERO scheduled runs for an
+#  hour while every manual dispatch ran fine. 5-min cadence is also enough
+#  for Neon's ~5-min idle timeout. Offset by 2 from the hour grid to dodge
+#  peak scheduler congestion at xx:00, xx:05, xx:10 …
+#
+# Activation delay: GitHub re-registers the schedule on every push to the
+# default branch and routinely takes 30-90 min to start firing the first
+# time on a new schedule. If runs don't appear within 90 min, fall back to
+# an external pinger (UptimeRobot free tier — 5-min pings, no setup) or
+# just rely on real traffic.
 
 on:
   schedule:
-    # Every 3 minutes, offset by 1 from the hour-aligned grid. GitHub Actions
-    # at the top of the hour ("0,3,6,...") hits peak scheduler congestion and
-    # gets the worst drift; offsetting by 1 ("1,4,7,...") puts us in the
-    # quieter slots and is empirically faster to start firing on new repos.
-    - cron: "1,4,7,10,13,16,19,22,25,28,31,34,37,40,43,46,49,52,55,58 * * * *"
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:  # manual run button
 
 concurrency:

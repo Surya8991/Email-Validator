@@ -14,7 +14,7 @@ FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBoun
 - **Config:** pydantic-settings + .env
 - **Serverless:** Vercel native Python runtime (auto-detects ASGI — no Mangum)
 - **Bulk processing:** GitHub Actions workflow (`bulk_process.yml`) — no timeout limit. Triggered INLINE from `/api/bulk` (Vercel kills BackgroundTasks the moment the response returns).
-- **Keep-warm:** GitHub Actions cron (`keep_warm.yml`) every 3 min hitting `/api/health` → keeps Neon (5-min auto-pause) and the Vercel function warm. Schedule offset off the hour grid to dodge scheduler congestion.
+- **Keep-warm:** GitHub Actions cron (`keep_warm.yml`) every **5 min** hitting `/api/health` → keeps Neon (5-min auto-pause) and the Vercel function warm. **Do NOT tighten below 5 min** — GitHub coalesces/deprioritizes denser schedules (we saw zero scheduled runs in an hour with `*/3`). Offset by 2 from the hour grid.
 - **Tests:** pytest + pytest-asyncio + respx
 - **Lint/types:** ruff (ruff.toml) + mypy (mypy.ini)
 
@@ -51,7 +51,7 @@ scripts/
 .github/
   workflows/
     bulk_process.yml  # workflow_dispatch: triggered by api_bulk.py with job_id
-    keep_warm.yml     # cron */3min: curls ${{ vars.APP_URL }}/api/health to keep Neon + Vercel function warm
+    keep_warm.yml     # cron every 5 min: curls ${{ vars.APP_URL }}/api/health to keep Neon + Vercel function warm
 .githooks/
   pre-push         # Thin wrapper calling scripts/pre_push_check.sh
 ruff.toml          # Ruff config (replaces pyproject.toml [tool.ruff])

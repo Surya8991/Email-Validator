@@ -101,5 +101,5 @@ bash scripts/pre_push_check.sh     # pre-push gate
 - All routes auth-gated. Sessions: SHA-256-hashed tokens in DB, HttpOnly cookie. New registrations start inactive — admin must approve.
 - Timestamps render in **IST** (UTC+5:30) — DB stays naive-UTC, conversion is display-only via `app/templating.py`.
 - Bulk jobs show a live **ETA** while running, plus a global HTMX progress bar for every in-flight request. Job list auto-refreshes while anything is queued or running.
-- Free-tier safe: `keep_warm.yml` pings `/api/health` every 3 min so Neon doesn't auto-pause; lifespan + dashboard aggregates are bounded so cold starts can't 504.
+- Free-tier safe: `keep_warm.yml` pings `/api/health` every 5 min so Neon doesn't auto-pause; lifespan + dashboard aggregates are bounded so cold starts can't 504.
 - **Read [PROJECT_LOG.md](PROJECT_LOG.md) before changing anything** — has the do-not-regress list, env-var table, and the Workflow Runbook for triaging Vercel + GHA failures.
