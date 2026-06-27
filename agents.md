@@ -114,7 +114,7 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 
 ### GitHub repo variables (different from secrets — Variables tab)
 - `APP_URL` — full origin without trailing slash (e.g. `https://email-validator-lilac.vercel.app`). Required for `keep_warm.yml`.
-- `CACHE_TTL_DAYS` — e.g. `30`. Empty values are now tolerated thanks to the `_drop_empty_env_values` validator in `app/config.py`.
+- `CACHE_TTL_DAYS` — e.g. `30`. Empty values are tolerated by `env_ignore_empty=True` on `SettingsConfigDict` in `app/config.py` (0.9.1+).
 
 ## Providers & Verdicts
 All normalize to: `valid | invalid | risky | unknown`
@@ -129,6 +129,15 @@ All normalize to: `valid | invalid | risky | unknown`
 - `local_first` — local check first; skip paid API on obvious invalids
 - `consensus` — all enabled providers in parallel, majority vote
 - `waterfall` — local → hunter → bouncify → zerobounce (stop at first confident result)
+
+## Delete endpoints (0.9.2)
+- `DELETE /api/bulk/{id}` — deletes a Job + its EmailResult rows. 409 if `status='running'`.
+- `POST /api/bulk/clear` — admin-only. Deletes all non-running jobs.
+- `DELETE /api/cache/{id}` — auth required (was anonymous before 0.9.2).
+- `POST /api/cache/purge` — auth required. Deletes expired rows only.
+- `POST /api/cache/clear` — admin-only. Wipes the entire cache.
+
+UI buttons live on `/jobs` (per-row + "Clear all history" header), `/jobs/{id}` (Delete job), and `/cache` ("Clear all" next to "Purge Expired").
 
 ## Bulk Upload Flow
 1. User uploads **CSV** / **XLSX** / pasted emails → `POST /api/bulk`. XLSX is converted to CSV server-side via openpyxl; paste mode is converted client-side to a `pasted.csv` blob.
@@ -151,7 +160,7 @@ Templates: `GET /api/bulk/template.csv` and `GET /api/bulk/template.xlsx` (openp
 - **`vercel.json`**: `"maxDuration": 10` (Hobby limit)
 - **`api/index.py`**: `sys.path.insert(0, root)` guard + `from app.main import app` — Vercel auto-detects the ASGI app. **Do NOT use Mangum** (it produces AWS Lambda response shape and Vercel returns `FUNCTION_INVOCATION_FAILED`).
 - **Lifespan schema migrations**: `app/db.py:_apply_lightweight_migrations()` runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for any entry in `_PG_COLUMN_ADDS` on every cold start. Idempotent, Postgres-only. Append to this list whenever a new column is added to a model — `create_all` will not alter existing tables.
-- **Jinja2Templates**: must use absolute `Path(__file__).parent.parent / "templates"` — relative paths break in Vercel
+- **Jinja2Templates**: import `templates` from `app.templating` (0.9.2+) — single shared instance with the `ist` UTC→IST filter pre-registered. Routes no longer construct their own `Jinja2Templates(...)`.
 - **SQLite on Vercel**: ephemeral `/tmp/` — data lost on cold starts. Always use DATABASE_URL for production.
 
 ## Auth Architecture
@@ -171,11 +180,11 @@ Templates: `GET /api/bulk/template.csv` and `GET /api/bulk/template.xlsx` (openp
 - SMTP probe (validation feature) off by default — port 25 blocked on most cloud/ISP
 - Per-provider daily caps prevent accidental credit burn
 - `disposable-email-domains` needs occasional `pip install -U`
-- `job.csv_data` stores raw CSV in DB — required for GitHub Actions to read it (no shared filesystem)
+- `job.csv_data` stores raw CSV in DB — required for GitHub Actions to read it (no shared filesystem). 0.9.2 hot paths (`/jobs`, `/jobs/{id}`, `/jobs/{id}/status`, dashboard `recent_jobs`) project columns explicitly to avoid pulling csv_data over the wire — that was 504-ing list pages on cold Neon.
 - Download endpoint generates CSV from `EmailResult` DB rows (no disk file — survives Vercel cold starts)
 - Registered users start with `is_active=False` — an admin must activate them before they can log in
 - **Vercel + BackgroundTasks**: the Python serverless runtime kills the function process immediately after the response is sent. FastAPI `BackgroundTasks` do NOT run reliably. Any post-response work that must happen on Vercel must instead run inline before the response.
-- **Empty env values**: an empty string for an int/float setting (e.g. `CACHE_TTL_DAYS=""`) used to crash startup; the `_drop_empty_env_values` model validator in `app/config.py` now drops them so defaults apply.
+- **Empty env values**: an empty string for an int/float setting (e.g. `CACHE_TTL_DAYS=""`) used to crash startup. Fixed in 0.9.1 by `env_ignore_empty=True` in `app/config.py`'s `SettingsConfigDict`. Do NOT replace this with a `model_validator(mode="before")` — pydantic-settings merges env values AFTER before-validators, so they don't fire for env sources.
 - **Cold-start chain**: with both Vercel and Neon on free tier, after 5 min idle every page load can 10s+ time out. The keep-warm cron is what prevents this. If you see widespread 504s, check that `keep_warm.yml` is firing and `APP_URL` is set.
 - **Gmail SMTP**: `SMTP_FROM` MUST equal `SMTP_USER` or Gmail rejects. Use an App Password (regular password is blocked).
 - **`session.commit()` expires ORM attributes**: if you load rows then commit something else in the same session, accessing the original rows' attributes raises `DetachedInstanceError`. Snapshot to plain tuples/dicts before commit (see audit-log export).

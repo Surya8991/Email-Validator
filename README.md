@@ -3,313 +3,102 @@
 [![Keep Warm](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml)
 [![Bulk Email Validation](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml)
 
-A multi-provider email validation web app with auth, teams, and an admin panel. Validates single emails or bulk CSVs using Bouncify, ZeroBounce, NeverBounce, Hunter.io, and a free local stack — with caching, analytics, and a clean UI.
+Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
 ---
 
-## Features
-
-- **Session-based auth** — login, register, logout with HttpOnly cookies; 7-day sliding sessions
-  - **Lockout** — 5 failed attempts auto-lock the account for 15 minutes (returns 429)
-  - **Forgot / reset password** — 30-min single-use token, account-enumeration-safe
-  - **User profile** (`/profile`) — change email / password, sign out all other devices
-- **Three-tier roles** — `user` → `admin` → `superadmin` with gated access per role
-- **Admin panel** (`/admin`) — manage users, teams, usage stats, provider config
-  - **User search & filters** — search by email, filter by role/status
-  - **User invite flow** — one-time links, role assignment, auto-login on acceptance (email-delivered if SMTP configured)
-  - **Audit log** — paginated history + **CSV export** of all admin write actions
-  - **Session manager** *(superadmin)* — view all active sessions, revoke any session
-  - **System settings** *(superadmin)* — toggle registration, maintenance mode, default monthly limits
-  - **Per-user validation limits** — monthly cap with progress bar; set per user from Users page
-- **Teams** — admins create teams; users request to join; admins/owners approve/reject
-  - **Team ownership** — creator auto-becomes owner; "Make owner" transfers; owner cannot be removed; team edit modal
-- **Transactional email** (Gmail SMTP, optional) — invites, admin-notify on self-register, account-approved, password reset, team-join decisions. All failure-isolated.
-- **Single email validation** with live results and confidence score
-- **Bulk validation** — three modes: **CSV** upload, **Excel (.xlsx)** upload (server-side convert), or **paste emails** textarea. Processed via GitHub Actions (no timeout limit). Downloadable CSV + Excel templates.
-- **4 validation strategies** — Bouncify Only, Local First (saves credits), Consensus, Waterfall
-- **5 providers** — Bouncify, ZeroBounce, NeverBounce, Hunter.io, Local (free, always on)
-- **Per-result cache TTL** — choose how long each result is cached (or skip caching entirely)
-- **Cache browser** with search + **CSV export**
-- **Analytics dashboard** — verdict trends, top invalid domains, cache stats (Chart.js)
-- **REST API** — full OpenAPI docs at `/docs`
-- **Dark mode** — persisted via localStorage
-- **Vercel-ready** — native ASGI on Vercel's Python runtime, persistent PostgreSQL via Neon
-- **Auto schema patches** — startup migration adds missing Postgres columns idempotently (no Alembic needed for simple adds)
-- **Free-tier-safe** — keep-warm GitHub Action pings `/api/health` every 3 minutes so Neon never auto-pauses; lifespan and dashboard aggregates are bounded so cold starts can't 504 the site
-
----
-
-## Stack
-
-| Layer | Tech |
-|---|---|
-| Backend | FastAPI + Python 3.12 |
-| Auth | Session cookies + bcrypt + SHA-256 token hashing |
-| Async HTTP | httpx |
-| ORM / DB | SQLModel + **PostgreSQL (Neon)** |
-| Frontend | HTMX + Tailwind CDN + Jinja2 |
-| Charts | Chart.js 4.4 |
-| Serverless | Vercel native Python (ASGI auto-detected) |
-| Bulk processing | GitHub Actions (bypasses Vercel 10s timeout) |
-| Excel I/O | openpyxl (XLSX import + on-the-fly template export) |
-| Email | stdlib smtplib via `app/services/email.py` (Gmail-friendly) |
-| Keep-warm | GitHub Actions cron every 3 min → `/api/health` |
-| Tests | pytest + pytest-asyncio + respx |
-| Lint | ruff |
-
----
-
-## Quick Start (Local)
+## Quick Start (local)
 
 ```bash
-# 1. Clone
 git clone https://github.com/Surya8991/Email-Validator.git
 cd Email-Validator
-
-# 2. Install deps
 pip install -r requirements.txt
 
-# 3. Configure
-cp .env.example .env
-# Edit .env — add at minimum:
-#   BOUNCIFY_API_KEY=...
-#   SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
-#   ADMIN_EMAIL=you@example.com
-#   ADMIN_PASSWORD=yourpassword
+# Minimum .env
+cat > .env <<EOF
+BOUNCIFY_API_KEY=...
+SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=changeme
+EOF
 
-# 4. Init DB (PostgreSQL only — skip for local SQLite)
-python scripts/init_db.py
-
-# 5. Run
 python -m uvicorn app.main:app --reload
-
-# 6. Open
-open http://localhost:8000
-# → redirects to /login — use ADMIN_EMAIL + ADMIN_PASSWORD
+# http://localhost:8000  (redirects to /login)
 ```
 
 ---
 
-## Vercel Deployment
+## Deploy to Vercel
 
-### 1. Deploy
+1. `vercel --prod`
+2. Set these env vars on Vercel:
 
-```bash
-npm i -g vercel
-vercel --prod
-```
+   | Required | Notes |
+   |---|---|
+   | `BOUNCIFY_API_KEY` | provider key |
+   | `DATABASE_URL` | Neon `postgres://…` URL |
+   | `SECRET_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"` |
+   | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | bootstrap on first run |
+   | `SUPERADMIN_EMAIL` | promoted on every startup |
+   | `GITHUB_PAT` | fine-grained PAT — repo: `Email-Validator`, **Actions: Read+Write** |
+   | `GITHUB_REPO` | `owner/repo` of this repo |
 
-### 2. Set environment variables in Vercel dashboard
+3. Set the same `DATABASE_URL` and `BOUNCIFY_API_KEY` as **GitHub Actions secrets** (Settings → Secrets → Actions) so the bulk worker hits the same DB and provider.
 
-| Variable | Value |
-|---|---|
-| `BOUNCIFY_API_KEY` | your Bouncify key |
-| `DATABASE_URL` | Neon connection string (`postgres://...`) |
-| `GITHUB_PAT` | GitHub PAT with `Actions (write)` scope |
-| `GITHUB_REPO` | `YourGitHubUsername/Email-Validator` |
-| `SECRET_KEY` | `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `ADMIN_EMAIL` | first admin email (only used when User table is empty) |
-| `ADMIN_PASSWORD` | first admin password |
-| `SUPERADMIN_EMAIL` | promoted/created as superadmin on every startup |
-| `PRODUCTION` | `true` |
-
-### 3. Set GitHub repository secrets (for bulk processing)
-
-Go to repo → Settings → Secrets → Actions:
-
-| Secret | Value |
-|---|---|
-| `DATABASE_URL` | same Neon URL |
-| `BOUNCIFY_API_KEY` | same key |
-
-### 4. Init Neon tables (one-time)
-
-Add `DATABASE_URL` to your local `.env`, then:
-
-```bash
-python scripts/init_db.py
-```
-
-Tables: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`, `userinvite`, `auditlog`, `systemsetting`
+4. Bulk jobs auto-dispatch from `/api/bulk` → GitHub Actions runs `bulk_process.yml` → writes back to Neon → UI polls progress.
 
 ---
 
-## Auth
+## Validation strategies
 
-- All routes require login — unauthenticated requests redirect to `/login`
-- New registrations start **inactive** — an admin must activate before the user can log in
-- **Admin** (`/admin`): manage users, teams, stats — requires `admin` or `superadmin` role
-- **Superadmin**: set `SUPERADMIN_EMAIL` env var — promoted on every startup (idempotent); can promote/demote admins
-
----
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `BOUNCIFY_API_KEY` | Yes | — | Primary validation provider |
-| `DATABASE_URL` | Yes (Vercel) | SQLite locally | Neon connection string |
-| `GITHUB_PAT` | For bulk | — | PAT with `Actions (write)` scope |
-| `GITHUB_REPO` | For bulk | — | `owner/repo` of this repo |
-| `SECRET_KEY` | Yes (prod) | dev placeholder | Random hex — `openssl rand -hex 32` |
-| `ADMIN_EMAIL` | First deploy | — | Bootstrap first admin (runs once on empty DB) |
-| `ADMIN_PASSWORD` | First deploy | — | Bootstrap first admin password |
-| `SUPERADMIN_EMAIL` | Recommended | — | Promoted to superadmin on every startup |
-| `PRODUCTION` | No | `false` | Enables stricter security defaults |
-| `ZEROBOUNCE_API_KEY` | No | — | Enables ZeroBounce |
-| `NEVERBOUNCE_API_KEY` | No | — | Enables NeverBounce |
-| `HUNTER_API_KEY` | No | — | Enables Hunter.io |
-| `CACHE_TTL_DAYS` | No | `30` | Default cache lifetime in days |
-| `HTTPX_TIMEOUT` | No | `10.0` | HTTP timeout (keep ≤ 8 on Vercel Hobby) |
-| `MAX_BULK_EMAILS` | No | `0` | Hard cap on CSV rows (0 = unlimited) |
-| `ENABLE_SMTP_PROBE` | No | `false` | Raw SMTP verification (port 25 often blocked) |
-| `BOUNCIFY_DAILY_CAP` | No | `500` | Max Bouncify calls/day (0 = unlimited) |
-
----
-
-## Pages
-
-| Page | URL | Role |
+| Strategy | Cost | What it does |
 |---|---|---|
-| Login | `/login` | Public |
-| Register | `/register` | Public |
-| Dashboard | `/` | User+ |
-| Validate | `/validate` | User+ |
-| Cache Browser | `/cache` | User+ |
-| Analytics | `/analytics` | User+ |
-| History | `/jobs` | User+ |
-| Teams | `/teams` | User+ |
-| Settings | `/settings` | User+ |
-| API Docs | `/docs` | User+ |
-| Admin Overview | `/admin` | Admin+ |
-| Admin Users | `/admin/users` | Admin+ |
-| Admin Teams | `/admin/teams` | Admin+ |
-| Admin Audit Log | `/admin/audit-log` | Admin+ |
-| Admin Usage | `/admin/usage` | Admin+ |
-| Admin Providers | `/admin/providers` | Admin+ |
-| Admin Sessions | `/admin/sessions` | Superadmin |
-| Admin System Settings | `/admin/sys-settings` | Superadmin |
+| `bouncify_only` (default) | 0–1 credit/email | Free local syntax+MX pre-filter; Bouncify only for the rest |
+| `local_first` | 0–1 credit/email | Local first, paid API only when local isn't conclusive |
+| `consensus` | $$$ | All providers in parallel, majority vote |
+| `waterfall` | $$ | Cascade, stop at first confident verdict |
+
+Cache hits short-circuit before any provider is called (TTL configurable per request, default 30d).
 
 ---
 
-## API Endpoints
+## API
 
-### Verify single email
-```http
-POST /api/verify
-Content-Type: application/json
+Full OpenAPI docs at `/docs`. Auth: session cookie via `/login`.
 
-{
-  "email": "user@example.com",
-  "providers": ["bouncify", "local"],
-  "strategy": "local_first",
-  "cache_ttl_days": 7
-}
 ```
+POST   /api/verify                 single email
+POST   /api/bulk                   upload CSV/XLSX → job_id
+GET    /api/bulk/{id}              poll status
+GET    /api/bulk/{id}/download     download results CSV
+DELETE /api/bulk/{id}              delete a job + its results
+POST   /api/bulk/clear             admin — delete all non-running jobs
 
-**Response:**
-```json
-{
-  "email": "user@example.com",
-  "verdict": "valid",
-  "confidence": 88,
-  "cached": false,
-  "providers": { "local": {...}, "bouncify": {...} },
-  "elapsed_ms": 312.4
-}
-```
+GET    /api/cache/export           export full cache to CSV
+DELETE /api/cache/{id}             delete one cache row
+POST   /api/cache/purge            delete expired rows
+POST   /api/cache/clear            admin — delete every cache row
 
-### Bulk CSV
-```http
-POST /api/bulk         # upload → job_id
-GET  /api/bulk/{id}    # poll status
-GET  /api/bulk/{id}/download?verdict=valid
-```
-
-### Stats & cache
-```
-GET  /api/stats
-GET  /api/domain/{domain}
-GET  /api/health
-POST /api/cache/purge
-DEL  /api/cache/{id}
+GET    /api/stats                  verdict + cache aggregates
+GET    /api/domain/{domain}        domain reputation summary
+GET    /api/health                 status + db_ok + enabled providers
 ```
 
 ---
 
-## Validation Strategies
-
-| Strategy | Cost | Description |
-|---|---|---|
-| `bouncify_only` | $ | Free local pre-filter (syntax + MX); if local says `invalid`, no Bouncify call. Otherwise 1 credit per email. |
-| `local_first` | ¢ | Free local check first. API only if not clearly invalid. |
-| `consensus` | $$$ | All providers in parallel, majority vote. Most accurate. |
-| `waterfall` | $$ | Tries providers in order, stops at first confident verdict. |
-
----
-
-## Running Tests
+## Tests & lint
 
 ```bash
-pytest -q   # 26 tests
-```
-
-Auth tests use an in-memory SQLite DB and a logged-in `auth_client` fixture — no real API calls.
-
----
-
-## Development
-
-```bash
-ruff check .            # lint
-ruff format .           # format
-mypy app/               # type check
-bash scripts/pre_push_check.sh   # 38-check pre-push gate (runs auto via git hook)
+pytest -q                          # 26 tests, all external HTTP mocked
+ruff check .
+bash scripts/pre_push_check.sh     # pre-push gate
 ```
 
 ---
 
-## Security
+## Notes
 
-- All routes behind session auth — unauthenticated → redirect to `/login`
-- Session tokens: SHA-256 hashed in DB, raw token only in HttpOnly SameSite=Lax cookie
-- Never commit `.env` — it's gitignored
-- `SECRET_KEY` must be a random hex string in production (not the dev placeholder)
-- Registered users start inactive — admin approval required
-- Per-provider daily caps to prevent runaway credit usage
-
----
-
-## Project Structure
-
-```
-app/
-├── main.py              # FastAPI app, lifespan, exception handlers, admin bootstrap
-├── auth.py              # Session helpers, require_auth/admin/superadmin guards
-├── config.py            # pydantic-settings, .env loader
-├── db.py                # SQLModel engine, URL normalization
-├── models.py            # All DB tables (Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership, UserInvite, AuditLog, SystemSetting)
-├── schemas.py           # Pydantic request/response DTOs
-├── providers/           # bouncify, zerobounce, neverbounce, hunter, local, registry
-├── core/                # validator.py, csv_io.py, cache.py, retry.py
-├── routes/
-│   ├── ui.py            # User-facing pages (auth-gated)
-│   ├── auth_routes.py   # /login, /register, /logout
-│   ├── admin.py         # /admin/* (admin/superadmin only)
-│   ├── api_single.py    # POST /api/verify
-│   ├── api_bulk.py      # POST /api/bulk + polling + download
-│   ├── api_stats.py     # GET /api/stats, /api/domain, /api/cache
-│   └── health.py        # GET /api/health
-├── workers/             # bulk_worker.py
-└── templates/
-    ├── base.html        # Nav with avatar dropdown + admin tab
-    ├── auth/            # login.html, register.html (split-panel)
-    ├── admin/           # base.html, users.html, stats.html, usage.html, providers.html, teams.html, team_detail.html
-    └── teams.html       # User-facing team cards
-api/
-└── index.py             # Vercel entry — exposes ASGI `app` directly (no Mangum)
-scripts/
-├── init_db.py           # One-time DB table creation
-├── process_job.py       # GitHub Actions bulk processor
-└── pre_push_check.sh    # 38-check pre-push safety gate
-```
+- All routes auth-gated. Sessions: SHA-256-hashed tokens in DB, HttpOnly cookie. New registrations start inactive — admin must approve.
+- Timestamps render in **IST** (UTC+5:30) — DB stays naive-UTC, conversion is display-only via `app/templating.py`.
+- Free-tier safe: `keep_warm.yml` pings `/api/health` every 3 min so Neon doesn't auto-pause; lifespan + dashboard aggregates are bounded so cold starts can't 504.
+- **Read [PROJECT_LOG.md](PROJECT_LOG.md) before changing anything** — has the do-not-regress list, env-var table, and the Workflow Runbook for triaging Vercel + GHA failures.

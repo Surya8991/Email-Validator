@@ -8,7 +8,7 @@
 ## 60-Second Resume
 
 ```
-1. cd "C:\Users\Surya L\Desktop\AI Agents\AI Email Vaildator"
+1. cd "D:\Coding\Email-Validator"
 2. Verify imports:  python -c "import fastapi, sqlmodel, httpx, email_validator, dns, disposable_email_domains, tenacity; print('ok')"
 3. Run app:         python -m uvicorn app.main:app --reload --port 8000
    → http://localhost:8000
