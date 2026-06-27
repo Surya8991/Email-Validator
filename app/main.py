@@ -63,11 +63,27 @@ def _bootstrap_admin() -> None:
                 db.commit()
 
 
+async def _safe_startup(fn) -> None:
+    """Run a blocking startup callable off the event loop with a tight timeout.
+
+    On Vercel + cold Neon, sync DB ops in lifespan can each take 5-8s; if any
+    one of them blows the function's 10s budget the whole cold start times
+    out and the user never sees a response. We absorb the slow path here so
+    the app always becomes responsive — operations that don't complete in
+    time will simply be retried on the next request's natural code path.
+    """
+    import asyncio
+    try:
+        await asyncio.wait_for(asyncio.to_thread(fn), timeout=4.0)
+    except Exception as e:  # noqa: BLE001
+        print(f"[startup] {fn.__name__} skipped/failed: {e}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_tables()
-    _bootstrap_admin()
-    backfill_team_owners()
+    await _safe_startup(create_db_tables)
+    await _safe_startup(_bootstrap_admin)
+    await _safe_startup(backfill_team_owners)
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
     if registry._client and not registry._client.is_closed:
