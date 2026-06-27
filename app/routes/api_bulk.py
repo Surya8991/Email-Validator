@@ -166,13 +166,37 @@ async def create_bulk_job(
     # is only useful locally where the server stays alive; on Vercel it would
     # be killed mid-run anyway.
     triggered = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
+    response_status = "queued"
     if not triggered:
         if os.getenv("VERCEL"):
-            logger.warning(
-                "Job %s queued but GitHub Actions dispatch failed. "
-                "Check GITHUB_PAT / GITHUB_REPO env vars on Vercel.",
-                job_id,
-            )
+            # On Vercel the in-process fallback can't run (function is killed
+            # the moment we return). A silent `queued` row hangs in the UI
+            # forever — mark the job `failed` with an actionable message so
+            # the operator can see WHY it didn't dispatch instead of staring
+            # at a phantom queue.
+            if not settings.github_pat:
+                reason = (
+                    "Auto-dispatch is not configured: GITHUB_PAT env var is "
+                    "not set on Vercel. Add a PAT with `workflow` scope and "
+                    "redeploy, then re-upload."
+                )
+            elif not settings.github_repo:
+                reason = "GITHUB_REPO env var is not set on Vercel."
+            else:
+                reason = (
+                    "GitHub Actions dispatch failed (non-204 from the API). "
+                    "Check the PAT scopes (`workflow` + `repo`) and that the "
+                    "default branch is `main`. See Vercel logs for the body."
+                )
+            logger.warning("Job %s: %s", job_id, reason)
+            with Session(engine) as session:
+                job = session.get(Job, job_id)
+                if job:
+                    job.status = "failed"
+                    job.error = reason[:500]
+                    session.add(job)
+                    session.commit()
+            response_status = "failed"
         else:
             # Local dev: BackgroundTasks survives because uvicorn keeps the
             # process alive after the response. Use it as a fallback worker.
@@ -181,7 +205,7 @@ async def create_bulk_job(
                 providers.split(","), strategy, ttl,
             )
 
-    return BulkJobResponse(job_id=job_id, total=0, status="queued")
+    return BulkJobResponse(job_id=job_id, total=0, status=response_status)
 
 
 _TEMPLATE_ROWS: list[tuple[str, str, str, str]] = [
