@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-24 (Session 8). Current VERSION: **0.8.0**
+> Last updated: 2026-06-27 (Session 9). Current VERSION: **0.9.0**
 
 ---
 
@@ -341,6 +341,7 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | 6b | 2026-06-24 | v0.6.1 | User invite flow — `UserInvite` model, `POST /admin/invite`, `POST /admin/invites/{id}/revoke`, `GET/POST /invite/{token}`, invite.html, users.html invite modal + URL banner + pending invites table. SHA-256 token pattern, superadmin-only admin invites, auto-login on acceptance. |
 | 7 | 2026-06-24 | v0.7.0 | Admin features A2→A6 + design overhaul D1-D7 — A2: user search/filter by email/role/status; A1: AuditLog model + log all write actions, `/admin/audit-log` with pagination; A3: `/admin/sessions` session manager (superadmin, revoke any session); A4: SystemSetting model, `/admin/sys-settings` (registration_open, maintenance_mode, default_validation_limit); A5: User.validation_limit monthly cap enforced in HTMX verify, progress bar in users table, set-limit modal; A6: dashboard quick-action cards + superadmin section + dark-mode-aware chart; D1-D7: admin sidebar sectioned (Data/Access/Config/Superadmin), dark mode toggle in admin, maintenance mode 503 handler, register.html already matched login design. Neon migration: auditlog + systemsetting tables created, validation_limit column added. |
 | 8 | 2026-06-24 | v0.8.0 | **Vercel runtime fix + auto-migrations + navbar redesign**. Dropped Mangum (returns AWS Lambda response shape → Vercel rejects with `FUNCTION_INVOCATION_FAILED`); `api/index.py` now exposes ASGI `app` directly and Vercel auto-detects it. Added lifespan schema migration `_apply_lightweight_migrations()` in `app/db.py` that runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` from `_PG_COLUMN_ADDS` — fixes the `user.validation_limit` missing-column 500 on Neon and prevents class of bug going forward (just append to the list when adding a column). Navbar redesign D8: replaced emoji icons with inline Lucide SVGs, subtle underline active state instead of indigo pill, backdrop-blur translucent header, gradient brand mark with indigo glow on hover, provider-dots in a small pill container, avatar uses gradient + hover ring, theme toggle uses sun/moon SVGs that swap via `dark:` (no JS textContent hack). Removed `mangum` from requirements. Pre-push checklist updated (38 checks; no longer asserts Mangum presence). |
+| 9 | 2026-06-27 | v0.9.0 | **SMTP transactional email + team ownership + ops hardening for free-tier infra**. New `app/services/email.py` mailer (stdlib `smtplib`, async via `to_thread`, Gmail-friendly STARTTLS/465). Four templated emails wired with failure-isolated try/except: invite link, admin-notify on self-registration, user-notify on activate, password reset (30-min TTL via new `PasswordReset` model + `/forgot-password` + `/reset-password/{token}` flow, account-enumeration-safe). Profile page (`/profile`) with change-email / change-password (current-pw confirmation, collision check) + "sign out other devices". Auth lockout: 5 failed logins → 15-min `locked_until` on `User` (returns 429). Team ownership: `role` column on `TeamMembership` ("owner"/"member"), creator auto-added as owner on create, "Make owner" button to transfer ownership, owner-removal blocked, team edit modal, audit entries `team.create`/`team.edit`/`team.transfer_ownership`. Startup `backfill_team_owners()` so legacy teams get an owner row. Bulk uploads now accept `.xlsx`/`.xlsm` (openpyxl converts to CSV server-side), paste-emails sub-tab in `/validate` (client builds `pasted.csv` blob), downloadable CSV+XLSX templates at `/api/bulk/template.{csv,xlsx}`, CSV export for cache browser (`/api/cache/export`) and audit log (`/admin/audit-log/export`, self-audited). Vercel deploy fixes after dispatch experiments: `_trigger_github_actions` runs INLINE (Vercel kills BackgroundTasks the moment the response is sent — pre-fix jobs sat queued forever); httpx timeout 8→4s; in-process fallback gated on `not os.getenv("VERCEL")`. Cold-start hardening: `_safe_startup()` wraps every lifespan DB op with a 4s `asyncio.to_thread` ceiling so a cold Neon never blocks app readiness; dashboard `/` aggregates moved off the request thread, bounded at 6s, plus a 30s in-process cache to skip repeat COUNT(*) on the same warm function. Empty-string env vars now drop to defaults via a `@model_validator(mode="before")` (a blank `CACHE_TTL_DAYS=""` repo variable was crashing the GitHub Actions worker before any code ran). Patched `/api/health` to `SELECT 1` so an external pinger actually wakes Neon. New `.github/workflows/keep_warm.yml` cron every 3 min (offset off the hour grid to dodge GitHub's scheduler congestion) hitting `${{ vars.APP_URL }}/api/health`. README gains status badges for both workflows. Fixed `GITHUB_REPO` default from the prior owner's name to `Surya8991/Email-Validator`. Forgot-password / change-password mail paths require `bcrypt` directly (same pattern as login). Dependencies: `openpyxl>=3.1.0` for XLSX import/export. New models: `PasswordReset`; new columns: `user.failed_login_count`, `user.locked_until`, `teammembership.role` (all in `_PG_COLUMN_ADDS`). |
 
 ---
 
@@ -362,6 +363,62 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 | `APP_HOST` | No | `0.0.0.0` | uvicorn bind host |
 | `APP_PORT` | No | `8000` | uvicorn bind port |
 | `LOG_LEVEL` | No | `info` | uvicorn log level |
+| `DATABASE_URL` | Production | `""` | Neon/Supabase Postgres URL (any `postgres://` or `postgresql://` auto-normalized to `+psycopg2`) |
+| `SECRET_KEY` | Production | dev value | Random hex for session signing — `openssl rand -hex 32` |
+| `PRODUCTION` | No | `false` | Marks deploy as prod (stricter cookie flags etc.) |
+| `MAX_BULK_EMAILS` | No | `0` | Hard cap on bulk-upload rows (0 = unlimited) |
+| `HTTPX_TIMEOUT` | No | `10.0` | httpx timeout — keep ≤ 8 on Vercel Hobby |
+| `GITHUB_PAT` | For bulk on Vercel | `""` | Fine-grained PAT, Actions: read/write — triggers `bulk_process.yml` |
+| `GITHUB_REPO` | No | `Surya8991/Email-Validator` | `owner/repo` for workflow_dispatch |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Bootstrap | `""` | First admin if `User` table is empty |
+| `SUPERADMIN_EMAIL` | Bootstrap | `""` | Promoted to superadmin on every startup (idempotent) |
+| `SMTP_HOST` | For email | `""` | Leave blank to disable all outbound mail |
+| `SMTP_PORT` | No | `587` | 587=STARTTLS, 465=SSL (auto-switches) |
+| `SMTP_USER` / `SMTP_PASSWORD` | If SMTP | `""` | For Gmail: account + App Password (NOT regular password) |
+| `SMTP_USE_TLS` | No | `true` | STARTTLS on 587; ignored for 465 |
+| `SMTP_FROM` | No | `SMTP_USER` | Must equal `SMTP_USER` for Gmail |
+| `SMTP_FROM_NAME` | No | `Email Validator` | Display name in the From header |
+| `SMTP_TIMEOUT` | No | `15.0` | Per-connection SMTP timeout |
+
+### GitHub repo Variables (Settings → Secrets and variables → Actions → Variables)
+| Var | Used by | Value |
+|---|---|---|
+| `APP_URL` | `keep_warm.yml` | Deployed origin, no trailing slash, e.g. `https://email-validator-lilac.vercel.app` |
+| `CACHE_TTL_DAYS` | `bulk_process.yml` | e.g. `30`. Empty values are now tolerated thanks to the `_drop_empty_env_values` model validator in `app/config.py`. |
+
+### GitHub repo Secrets
+| Secret | Used by | Notes |
+|---|---|---|
+| `DATABASE_URL` | `bulk_process.yml` | Must match the Vercel app's DB — otherwise the worker can't see jobs the app created. |
+| `BOUNCIFY_API_KEY` | `bulk_process.yml` | Same as Vercel. |
+| `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `HUNTER_API_KEY` | `bulk_process.yml` | Optional, only if those providers are enabled. |
+
+---
+
+## Free-Tier Infra Notes (read before debugging timeouts)
+
+The app is deployed on **Vercel Hobby (10s function timeout)** with **Neon Free (5-min idle auto-pause)**. The two together create a cold-start chain that has caused most production incidents:
+
+1. No traffic for 5 min → Neon pauses.
+2. Next request hits Vercel → Vercel cold-starts the function.
+3. Function tries to query → Neon is still resuming (5-8s) → 10s budget burned → 504.
+
+Mitigations now in code:
+- **`keep_warm.yml`** GitHub Actions cron every 3 min pings `/api/health` (which runs a `SELECT 1` against the DB). Schedule offset to 1,4,7,... to dodge GitHub's hour-aligned scheduler congestion.
+- **`_safe_startup()`** in `app/main.py` bounds every lifespan DB op at 4s via `asyncio.wait_for(asyncio.to_thread(...))` — partial failures print and continue; the operations are all idempotent so the next request that needs them retries naturally.
+- **Dashboard cache** — `/` aggregates run via `asyncio.to_thread` with a 6s ceiling and cache for 30s. Without this, 3 sequential `COUNT(*)` queries on Neon free tier reliably 504'd the dashboard.
+- **`/api/bulk` dispatches inline** — Vercel kills FastAPI BackgroundTasks the instant a response is sent, so the GitHub dispatch MUST run before the response. httpx timeout is 4s. In-process fallback is gated on `not os.getenv("VERCEL")` because it can't survive there anyway.
+
+Setup checklist for a healthy free-tier deploy:
+- [ ] `APP_URL` repo variable set (otherwise keep-warm exits with "not set")
+- [ ] `GITHUB_PAT` Vercel env var set (otherwise bulk jobs queue but never dispatch)
+- [ ] `DATABASE_URL` set both in Vercel **and** in GitHub repo secrets (must be the same DB)
+- [ ] First Keep Warm run triggered manually after setup (auto-cron can take 30-60 min to start firing the first time on a new repo)
+
+If still seeing 504s, the order of triage:
+1. `GET /api/health` returns JSON? If yes, Vercel+DB are healthy; the problem is a specific slow route.
+2. Vercel logs for the offending route — look for slow queries or import-time failures.
+3. Neon dashboard — is the compute green/active?
 
 ---
 
@@ -375,4 +432,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-24 — Session 8 — v0.8.0_
+_Last updated: 2026-06-27 — Session 9 — v0.9.0_

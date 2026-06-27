@@ -1,18 +1,20 @@
 # AI Email Validator — Agent Context
 
 ## Overview
-FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email and bulk CSV modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk CSV jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout.
+FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)
 - **HTTP:** httpx.AsyncClient (shared, lifespan-managed)
-- **Auth:** Session-based (HttpOnly cookie `ev_session`), SHA-256 hashed tokens, 7-day sliding TTL. `bcrypt` library directly (passlib incompatible with bcrypt>=5).
+- **Auth:** Session-based (HttpOnly cookie `ev_session`), SHA-256 hashed tokens, 7-day sliding TTL. `bcrypt` library directly (passlib incompatible with bcrypt>=5). **Failed-login lockout**: 5 wrong attempts → `User.locked_until` set 15 min ahead, returns 429 until expiry.
+- **Email:** stdlib `smtplib` in `app/services/email.py`, async via `asyncio.to_thread`. Gmail-friendly STARTTLS (587) or SMTPS (465). Every send is failure-isolated — `SMTP_HOST=""` silently disables all mail.
 - **Local validation:** email-validator, dnspython, disposable-email-domains
 - **Storage:** SQLModel + **PostgreSQL (Neon)** — persistent. SQLite used locally when DATABASE_URL is unset.
 - **Frontend:** HTMX + Tailwind CDN + Jinja2 templates (no build step)
 - **Config:** pydantic-settings + .env
 - **Serverless:** Vercel native Python runtime (auto-detects ASGI — no Mangum)
-- **Bulk processing:** GitHub Actions workflow (`bulk_process.yml`) — no timeout limit
+- **Bulk processing:** GitHub Actions workflow (`bulk_process.yml`) — no timeout limit. Triggered INLINE from `/api/bulk` (Vercel kills BackgroundTasks the moment the response returns).
+- **Keep-warm:** GitHub Actions cron (`keep_warm.yml`) every 3 min hitting `/api/health` → keeps Neon (5-min auto-pause) and the Vercel function warm. Schedule offset off the hour grid to dodge scheduler congestion.
 - **Tests:** pytest + pytest-asyncio + respx
 - **Lint/types:** ruff (ruff.toml) + mypy (mypy.ini)
 
@@ -23,20 +25,22 @@ app/
   config.py        # Settings (pydantic-settings) — reads .env
   auth.py          # Session helpers: create/delete/get session, require_auth/admin/superadmin guards
   db.py            # SQLModel engine + URL normalization (postgres:// → postgresql+psycopg2://)
-  models.py        # DB tables: Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership, UserInvite, AuditLog, SystemSetting
+  models.py        # DB tables: Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership (with role: owner|member), UserInvite, PasswordReset, AuditLog, SystemSetting
   schemas.py       # Pydantic DTOs (request/response)
   providers/       # base.py, bouncify.py, zerobounce.py, neverbounce.py, hunter.py, local.py, registry.py
+  services/        # email.py — SMTP mailer + 4 transactional templates (invite/approval/reset/team-join)
   core/            # validator.py (strategies), csv_io.py, cache.py, retry.py
   routes/
-    ui.py          # User-facing UI (auth-gated), /teams + join/cancel
-    auth_routes.py # /login, /register, /logout, /invite/{token}
-    admin.py       # /admin/* — users (search/filter/invite/limit), audit-log, sessions, sys-settings, teams, stats, usage, providers
-    api_single.py, api_bulk.py, api_stats.py, health.py
-  workers/         # bulk_worker.py (BackgroundTasks fallback for local dev)
+    ui.py          # User-facing UI (auth-gated), /teams + join/cancel. Dashboard `/` has 30s in-process cache + 6s timeout on aggregates.
+    auth_routes.py # /login (lockout-aware), /register (notifies admins), /logout, /invite/{token}, /forgot-password, /reset-password/{token}, /profile + /profile/{email,password,sessions/revoke-all}
+    admin.py       # /admin/* — users (search/filter/invite/limit), audit-log + export, sessions, sys-settings, teams (owner role, transfer, edit, delete), stats, usage, providers
+    api_single.py, api_bulk.py (xlsx-aware, paste path), api_stats.py (cache export), health.py (now SELECT 1)
+  workers/         # bulk_worker.py (BackgroundTasks fallback — local dev ONLY; gated on `not os.getenv("VERCEL")`)
   templates/
     base.html      # Main nav (Lucide SVG icons, backdrop-blur, underline active state, avatar dropdown + admin tab)
     auth/          # login.html, register.html (split-panel design)
-    admin/         # base.html (sectioned sidebar: Data/Access/Config/Superadmin), users.html (search+filter+invite+limit), stats.html (A6 dashboard), audit_log.html, sessions.html, sys_settings.html, usage.html, providers.html, teams.html, team_detail.html
+    admin/         # base.html (sectioned sidebar: Data/Access/Config/Superadmin), users.html (search+filter+invite+limit, invite-email status), stats.html (A6 dashboard), audit_log.html (+ Export CSV), sessions.html, sys_settings.html, usage.html, providers.html, teams.html, team_detail.html (Owner badge, Make-owner button, Edit modal)
+    auth/          # login.html (Forgot-password link), register.html, invite.html, forgot_password.html, reset_password.html, profile.html
     teams.html     # User-facing team cards with join/cancel request
 api/
   index.py         # Vercel entry — sys.path guard + `from app.main import app` (ASGI auto-detected)
@@ -47,6 +51,7 @@ scripts/
 .github/
   workflows/
     bulk_process.yml  # workflow_dispatch: triggered by api_bulk.py with job_id
+    keep_warm.yml     # cron */3min: curls ${{ vars.APP_URL }}/api/health to keep Neon + Vercel function warm
 .githooks/
   pre-push         # Thin wrapper calling scripts/pre_push_check.sh
 ruff.toml          # Ruff config (replaces pyproject.toml [tool.ruff])
@@ -76,9 +81,17 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 ### Required for Vercel
 - `BOUNCIFY_API_KEY` — primary provider
 - `DATABASE_URL` — Neon connection string (`postgres://...` or `postgresql+psycopg2://...`)
-- `GITHUB_PAT` — PAT with `Actions (write)` scope (for bulk CSV processing)
-- `GITHUB_REPO` — `owner/repo` (e.g. `Layruss98266/Email-Validator`)
+- `GITHUB_PAT` — fine-grained PAT, Actions: read/write (for bulk CSV processing). Without this, jobs sit at `queued` forever on Vercel.
+- `GITHUB_REPO` — `owner/repo` (default: `Surya8991/Email-Validator`)
 - `SECRET_KEY` — random string for session signing (generate: `openssl rand -hex 32`)
+
+### SMTP (outbound mail — Gmail recommended)
+- `SMTP_HOST` (e.g. `smtp.gmail.com`) — leave blank to disable all email
+- `SMTP_PORT` (default `587`; use `465` for SSL — code auto-switches)
+- `SMTP_USER` / `SMTP_PASSWORD` (for Gmail: an **App Password**, not the regular password)
+- `SMTP_USE_TLS=true`
+- `SMTP_FROM` — must equal `SMTP_USER` on Gmail
+- `SMTP_FROM_NAME=Email Validator`
 
 ### Auth bootstrap (set once for production)
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` — creates first admin user if User table is empty
@@ -96,8 +109,12 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 - `*_DAILY_CAP` — per-provider daily quota cap (0 = unlimited)
 - `PRODUCTION=true` — enables stricter security defaults
 
-### GitHub repo secrets (for bulk workflow)
+### GitHub repo secrets (for bulk_process.yml worker)
 - `DATABASE_URL`, `BOUNCIFY_API_KEY`, optional provider keys
+
+### GitHub repo variables (different from secrets — Variables tab)
+- `APP_URL` — full origin without trailing slash (e.g. `https://email-validator-lilac.vercel.app`). Required for `keep_warm.yml`.
+- `CACHE_TTL_DAYS` — e.g. `30`. Empty values are now tolerated thanks to the `_drop_empty_env_values` validator in `app/config.py`.
 
 ## Providers & Verdicts
 All normalize to: `valid | invalid | risky | unknown`
@@ -113,12 +130,15 @@ All normalize to: `valid | invalid | risky | unknown`
 - `consensus` — all enabled providers in parallel, majority vote
 - `waterfall` — local → hunter → bouncify → zerobounce (stop at first confident result)
 
-## Bulk CSV Flow
-1. User uploads CSV → `POST /api/bulk` stores `csv_data` in DB, creates Job row
-2. Vercel function calls GitHub Actions `workflow_dispatch` API with `job_id`
-3. GHA runner: `python scripts/process_job.py --job-id <id>` reads DB, validates, writes results
-4. Frontend polls `GET /api/bulk/{id}` for progress
-5. User downloads `GET /api/bulk/{id}/download?verdict=all|valid|invalid|risky`
+## Bulk Upload Flow
+1. User uploads **CSV** / **XLSX** / pasted emails → `POST /api/bulk`. XLSX is converted to CSV server-side via openpyxl; paste mode is converted client-side to a `pasted.csv` blob.
+2. `Job` row created, `csv_data` stored in DB.
+3. Vercel function calls GitHub Actions `workflow_dispatch` API INLINE (4s timeout) with `job_id` — must finish before the response returns because Vercel kills the function after that.
+4. GHA runner: `python scripts/process_job.py --job-id <id>` reads DB, validates, writes results.
+5. Frontend polls `GET /api/bulk/{id}` for progress.
+6. User downloads `GET /api/bulk/{id}/download?verdict=all|valid|invalid|risky`.
+
+Templates: `GET /api/bulk/template.csv` and `GET /api/bulk/template.xlsx` (openpyxl-generated on the fly).
 
 ## Cache TTL Semantics
 - `ttl_days=None` → use global `CACHE_TTL_DAYS` setting
@@ -140,19 +160,26 @@ All normalize to: `valid | invalid | risky | unknown`
 - **`require_auth`**: raises `RequiresAuth` exception → Starlette handler redirects to `/login` (can't return RedirectResponse from FastAPI Depends)
 - **`require_admin`**: allows `admin` or `superadmin` roles
 - **`require_superadmin`**: strict — `superadmin` only (promote/demote actions)
-- **Teams flow:** admin creates team → user requests join (`/teams/{id}/request`) → admin approves/rejects (`/admin/teams/{id}/approve|reject/{mid}`)
+- **Teams flow:** admin creates team → user requests join (`/teams/{id}/request`) → admin approves/rejects (`/admin/teams/{id}/approve|reject/{mid}`, both now email the user when SMTP is configured)
+- **Team ownership:** creator is auto-added as owner (`TeamMembership.role="owner"`); ownership transferrable to any active member via `POST /admin/teams/{id}/transfer/{user_id}`; owner cannot be removed (must transfer first or delete the team); `backfill_team_owners()` in `app/db.py` retro-adds owner rows for legacy teams on startup
 - **bcrypt directly** — `passlib[bcrypt]` raises ValueError during backend init with bcrypt>=5; use `bcrypt>=4.0.0` and call `bcrypt.hashpw`/`checkpw` directly
 - **`UserSession` model** — named to avoid conflict with `sqlmodel.Session`
 - Data is shared across all users (no per-user isolation) — auth is access control only
 
 ## Sensitive / Gotchas
-- `.env` is gitignored — never commit API keys or SECRET_KEY
-- SMTP probe off by default — port 25 blocked on most cloud/ISP
+- `.env` is gitignored — never commit API keys, SECRET_KEY, or SMTP_PASSWORD
+- SMTP probe (validation feature) off by default — port 25 blocked on most cloud/ISP
 - Per-provider daily caps prevent accidental credit burn
 - `disposable-email-domains` needs occasional `pip install -U`
 - `job.csv_data` stores raw CSV in DB — required for GitHub Actions to read it (no shared filesystem)
 - Download endpoint generates CSV from `EmailResult` DB rows (no disk file — survives Vercel cold starts)
 - Registered users start with `is_active=False` — an admin must activate them before they can log in
+- **Vercel + BackgroundTasks**: the Python serverless runtime kills the function process immediately after the response is sent. FastAPI `BackgroundTasks` do NOT run reliably. Any post-response work that must happen on Vercel must instead run inline before the response.
+- **Empty env values**: an empty string for an int/float setting (e.g. `CACHE_TTL_DAYS=""`) used to crash startup; the `_drop_empty_env_values` model validator in `app/config.py` now drops them so defaults apply.
+- **Cold-start chain**: with both Vercel and Neon on free tier, after 5 min idle every page load can 10s+ time out. The keep-warm cron is what prevents this. If you see widespread 504s, check that `keep_warm.yml` is firing and `APP_URL` is set.
+- **Gmail SMTP**: `SMTP_FROM` MUST equal `SMTP_USER` or Gmail rejects. Use an App Password (regular password is blocked).
+- **`session.commit()` expires ORM attributes**: if you load rows then commit something else in the same session, accessing the original rows' attributes raises `DetachedInstanceError`. Snapshot to plain tuples/dicts before commit (see audit-log export).
+- **Migration list**: adding a column to a model REQUIRES appending the `(table, column, DDL)` to `_PG_COLUMN_ADDS` in `app/db.py`. New tables are auto-created by `SQLModel.metadata.create_all()`; columns on existing tables are not.
 
 ## Run Tests
 ```bash

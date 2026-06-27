@@ -10,25 +10,32 @@ A multi-provider email validation web app with auth, teams, and an admin panel. 
 ## Features
 
 - **Session-based auth** — login, register, logout with HttpOnly cookies; 7-day sliding sessions
+  - **Lockout** — 5 failed attempts auto-lock the account for 15 minutes (returns 429)
+  - **Forgot / reset password** — 30-min single-use token, account-enumeration-safe
+  - **User profile** (`/profile`) — change email / password, sign out all other devices
 - **Three-tier roles** — `user` → `admin` → `superadmin` with gated access per role
 - **Admin panel** (`/admin`) — manage users, teams, usage stats, provider config
   - **User search & filters** — search by email, filter by role/status
-  - **User invite flow** — one-time links, role assignment, auto-login on acceptance
-  - **Audit log** — paginated history of all admin write actions with action-type coloring
+  - **User invite flow** — one-time links, role assignment, auto-login on acceptance (email-delivered if SMTP configured)
+  - **Audit log** — paginated history + **CSV export** of all admin write actions
   - **Session manager** *(superadmin)* — view all active sessions, revoke any session
   - **System settings** *(superadmin)* — toggle registration, maintenance mode, default monthly limits
   - **Per-user validation limits** — monthly cap with progress bar; set per user from Users page
-- **Teams** — admins create teams; users request to join; admins approve/reject
+- **Teams** — admins create teams; users request to join; admins/owners approve/reject
+  - **Team ownership** — creator auto-becomes owner; "Make owner" transfers; owner cannot be removed; team edit modal
+- **Transactional email** (Gmail SMTP, optional) — invites, admin-notify on self-register, account-approved, password reset, team-join decisions. All failure-isolated.
 - **Single email validation** with live results and confidence score
-- **Bulk CSV upload** — drag-and-drop, processed via GitHub Actions (no timeout limit)
+- **Bulk validation** — three modes: **CSV** upload, **Excel (.xlsx)** upload (server-side convert), or **paste emails** textarea. Processed via GitHub Actions (no timeout limit). Downloadable CSV + Excel templates.
 - **4 validation strategies** — Bouncify Only, Local First (saves credits), Consensus, Waterfall
 - **5 providers** — Bouncify, ZeroBounce, NeverBounce, Hunter.io, Local (free, always on)
 - **Per-result cache TTL** — choose how long each result is cached (or skip caching entirely)
+- **Cache browser** with search + **CSV export**
 - **Analytics dashboard** — verdict trends, top invalid domains, cache stats (Chart.js)
 - **REST API** — full OpenAPI docs at `/docs`
 - **Dark mode** — persisted via localStorage
 - **Vercel-ready** — native ASGI on Vercel's Python runtime, persistent PostgreSQL via Neon
 - **Auto schema patches** — startup migration adds missing Postgres columns idempotently (no Alembic needed for simple adds)
+- **Free-tier-safe** — keep-warm GitHub Action pings `/api/health` every 3 minutes so Neon never auto-pauses; lifespan and dashboard aggregates are bounded so cold starts can't 504 the site
 
 ---
 
@@ -44,6 +51,9 @@ A multi-provider email validation web app with auth, teams, and an admin panel. 
 | Charts | Chart.js 4.4 |
 | Serverless | Vercel native Python (ASGI auto-detected) |
 | Bulk processing | GitHub Actions (bypasses Vercel 10s timeout) |
+| Excel I/O | openpyxl (XLSX import + on-the-fly template export) |
+| Email | stdlib smtplib via `app/services/email.py` (Gmail-friendly) |
+| Keep-warm | GitHub Actions cron every 3 min → `/api/health` |
 | Tests | pytest + pytest-asyncio + respx |
 | Lint | ruff |
 
@@ -53,7 +63,7 @@ A multi-provider email validation web app with auth, teams, and an admin panel. 
 
 ```bash
 # 1. Clone
-git clone https://github.com/Layruss98266/Email-Validator.git
+git clone https://github.com/Surya8991/Email-Validator.git
 cd Email-Validator
 
 # 2. Install deps
