@@ -1,9 +1,9 @@
 name: Dependabot Auto-Merge
 
-# Auto-merges Dependabot PRs for patch and minor updates once CI passes.
-# Major bumps are left for manual review (they can have breaking changes).
-# Combined with branch protection (0 reviews required, CI must pass), this
-# means dependency updates are fully hands-off for non-breaking releases.
+# Auto-merges Dependabot PRs for PATCH updates only once CI passes.
+# Minor + major bumps are left for manual review — minor can introduce
+# new APIs that subtly break things, major routinely has breaking changes.
+# Patches are bug fixes by semver convention and are the safest to auto-land.
 
 on:
   pull_request:
@@ -24,8 +24,8 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge for patch / minor
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+      - name: Enable auto-merge for patch only
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
