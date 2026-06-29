@@ -153,7 +153,11 @@
     lookupInFlight: false,
   };
 
-  const LOOKUP_BATCH = 5000;
+  // 5000 emails per call timed out Vercel Hobby (10s) during cold Neon
+  // because /admin/cache-lookup uses LOWER(email) IN (...) which bypasses
+  // the unique index on emailcache.email. 1000 keeps each call under the
+  // 10s ceiling even on a cold pool. Lower it further if you see 504s.
+  const LOOKUP_BATCH = 1000;
   const DROP_VERDICTS = new Set(["invalid", "unknown"]);
   const KEEP_VERDICTS = new Set(["valid", "risky", "catch-all", "catchall", "accept_all"]);
 
