@@ -1,8 +1,10 @@
+import asyncio
 import csv
 import hashlib
 import io
 import json
 import secrets
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -38,7 +40,65 @@ from app.templating import templates
 
 INVITE_TTL_DAYS = 7
 
+# Short-lived in-memory cache for the admin overview's aggregate queries.
+# Same pattern as the user dashboard in app/routes/ui.py — without it, a cold
+# Neon connection + 4 COUNTs + a 13-day GROUP BY blows past Vercel Hobby's
+# 10s function limit and the page 504s.
+_ADMIN_OVERVIEW_CACHE: dict = {"ts": 0.0, "data": None}
+_ADMIN_OVERVIEW_TTL = 30.0
+
 router = APIRouter(prefix="/admin")
+
+
+def _admin_overview_aggregates() -> dict:
+    """Run the admin overview's COUNT + GROUP BY queries.
+
+    Heavy on a cold Neon connection — callers should wrap with
+    asyncio.to_thread + wait_for so a slow DB can't 504 the request.
+    """
+    with Session(engine) as db:
+        total_results = db.exec(select(func.count()).select_from(EmailResult)).one() or 0
+        total_cache = db.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        total_users = db.exec(select(func.count()).select_from(User)).one() or 0
+        pending_users = db.exec(
+            select(func.count()).select_from(User).where(User.is_active == False)  # noqa: E712
+        ).one() or 0
+
+        verdict_rows = db.execute(text(
+            "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
+        )).fetchall()
+        verdict_counts = {r[0]: r[1] for r in verdict_rows}
+
+        if is_postgres():
+            daily_sql = """
+                SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS d, verdict, COUNT(*) AS cnt
+                FROM emailresult
+                WHERE created_at >= NOW() - INTERVAL '13 days'
+                GROUP BY d, verdict ORDER BY d
+            """
+        else:
+            daily_sql = """
+                SELECT strftime('%Y-%m-%d', created_at) AS d, verdict, COUNT(*) AS cnt
+                FROM emailresult
+                WHERE created_at >= date('now', '-13 days')
+                GROUP BY d, verdict ORDER BY d
+            """
+
+        daily_rows = db.execute(text(daily_sql)).fetchall()
+        daily: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
+        )
+        for date_str, verdict, cnt in daily_rows:
+            daily[date_str][verdict] = cnt
+
+    return {
+        "total_results": total_results,
+        "total_cache": total_cache,
+        "total_users": total_users,
+        "pending_users": pending_users,
+        "verdict_counts": verdict_counts,
+        "daily": {d: dict(v) for d, v in daily.items()},
+    }
 
 
 def _log_audit(
@@ -104,54 +164,44 @@ def _admin_ctx(active: str, current_user: User) -> dict:
 
 @router.get("", response_class=HTMLResponse)
 async def admin_overview(request: Request, current_user: User = Depends(require_admin)):
-    with Session(engine) as db:
-        total_results = db.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = db.exec(select(func.count()).select_from(EmailCache)).one() or 0
-        total_users = db.exec(select(func.count()).select_from(User)).one() or 0
-        pending_users = db.exec(
-            select(func.count()).select_from(User).where(User.is_active == False)  # noqa: E712
-        ).one() or 0
+    now = time.monotonic()
+    if (
+        _ADMIN_OVERVIEW_CACHE["data"] is not None
+        and (now - _ADMIN_OVERVIEW_CACHE["ts"]) < _ADMIN_OVERVIEW_TTL
+    ):
+        agg = _ADMIN_OVERVIEW_CACHE["data"]
+    else:
+        # Off the event loop with a hard ceiling — on a cold Neon connection
+        # the COUNTs + GROUP BY can take >10s and would 504 Vercel Hobby.
+        # If we miss the window, fall back to last cached snapshot (or zeros
+        # on first ever cold start) so the page renders instead of erroring.
+        try:
+            agg = await asyncio.wait_for(
+                asyncio.to_thread(_admin_overview_aggregates), timeout=6.0,
+            )
+            _ADMIN_OVERVIEW_CACHE["ts"] = now
+            _ADMIN_OVERVIEW_CACHE["data"] = agg
+        except Exception:
+            agg = _ADMIN_OVERVIEW_CACHE["data"] or {
+                "total_results": 0, "total_cache": 0,
+                "total_users": 0, "pending_users": 0,
+                "verdict_counts": {}, "daily": {},
+            }
 
-        verdict_rows = db.execute(text(
-            "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
-        )).fetchall()
-        verdict_counts = {r[0]: r[1] for r in verdict_rows}
-
-        if is_postgres():
-            daily_sql = """
-                SELECT TO_CHAR(created_at, 'YYYY-MM-DD') AS d, verdict, COUNT(*) AS cnt
-                FROM emailresult
-                WHERE created_at >= NOW() - INTERVAL '13 days'
-                GROUP BY d, verdict ORDER BY d
-            """
-        else:
-            daily_sql = """
-                SELECT strftime('%Y-%m-%d', created_at) AS d, verdict, COUNT(*) AS cnt
-                FROM emailresult
-                WHERE created_at >= date('now', '-13 days')
-                GROUP BY d, verdict ORDER BY d
-            """
-
-        daily_rows = db.execute(text(daily_sql)).fetchall()
-        daily: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
-        )
-        for date_str, verdict, cnt in daily_rows:
-            daily[date_str][verdict] = cnt
-
+    daily = agg["daily"]
     chart_data = {
-        "verdict_counts": verdict_counts,
+        "verdict_counts": agg["verdict_counts"],
         "daily_stats": [{"date": d, **counts} for d, counts in sorted(daily.items())],
-        "total_validated": total_results,
-        "total_cached": total_cache,
+        "total_validated": agg["total_results"],
+        "total_cached": agg["total_cache"],
     }
     return templates.TemplateResponse(request, "admin/stats.html", {
         **_admin_ctx("stats", current_user),
-        "total_results": total_results,
-        "total_cache": total_cache,
-        "total_users": total_users,
-        "pending_users": pending_users,
-        "verdict_counts": verdict_counts,
+        "total_results": agg["total_results"],
+        "total_cache": agg["total_cache"],
+        "total_users": agg["total_users"],
+        "pending_users": agg["pending_users"],
+        "verdict_counts": agg["verdict_counts"],
         "chart_data_json": json.dumps(chart_data),
     })
 
