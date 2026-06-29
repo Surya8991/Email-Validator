@@ -82,12 +82,40 @@
       {% if verdict_counts.get('unknown', 0) > 0 %}
       <div class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
         <button
-          hx-post="/admin/retry-unknowns?batch_size=500&max_batches=20"
-          hx-confirm="Dispatch retry_unknowns? Up to 20 batches × 500 = 10,000 emails this run. Bouncify credit per email — confirm?"
-          hx-on::after-request="if (event.detail.successful) alert('Retry workflow dispatched. Watch GitHub Actions for progress.'); else alert('Dispatch failed: ' + event.detail.xhr.responseText)"
-          class="w-full text-xs font-medium px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition">
+          id="retry-unknowns-btn"
+          onclick="retryUnknowns(this)"
+          class="w-full text-xs font-medium px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed">
           ↻ Retry up to 10,000 of {{ verdict_counts.get('unknown', 0) }} unknowns
         </button>
+        <script>
+          async function retryUnknowns(btn) {
+            const ok = confirm(
+              "Dispatch retry_unknowns? Up to 20 batches × 500 = 10,000 emails this run. " +
+              "Bouncify credit per email — confirm?"
+            );
+            if (!ok) return;
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = "Dispatching…";
+            try {
+              const resp = await fetch(
+                "/admin/retry-unknowns?batch_size=500&max_batches=20",
+                { method: "POST", credentials: "same-origin" }
+              );
+              const text = await resp.text();
+              if (resp.ok) {
+                alert("Retry workflow dispatched. Watch GitHub Actions for progress.");
+              } else {
+                alert("Dispatch failed (" + resp.status + "): " + text.slice(0, 400));
+              }
+            } catch (e) {
+              alert("Dispatch failed: " + (e && e.message ? e.message : e));
+            } finally {
+              btn.disabled = false;
+              btn.textContent = original;
+            }
+          }
+        </script>
         <p class="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
           Runs in 500-email batches, exits early if Bouncify resolves zero in a batch. Re-click to continue once the previous run is done.
         </p>
