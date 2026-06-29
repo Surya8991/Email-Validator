@@ -385,6 +385,57 @@ async def delete_job(job_id: int, current_user: User = Depends(require_auth)):
     return {"deleted": True, "job_id": job_id}
 
 
+@router.post("/api/bulk/{job_id}/retry")
+async def retry_job(job_id: int, current_user: User = Depends(require_auth)):
+    """Re-dispatch a failed job to GitHub Actions.
+
+    Only allowed on jobs in 'failed' status — re-running a queued or running
+    job risks two workers writing into the same EmailResult table. We delete
+    any partial EmailResult rows from the prior run before queueing the
+    fresh dispatch (the worker iterates the full email list every time and
+    would otherwise produce duplicate rows).
+    """
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not _is_privileged(current_user) and job.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status != "failed":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Only failed jobs can be retried (this one is '{job.status}').",
+            )
+        if not job.csv_data:
+            raise HTTPException(
+                status_code=410,
+                detail="Original CSV is no longer attached to this job. Re-upload.",
+            )
+        session.execute(
+            text("DELETE FROM emailresult WHERE job_id = :jid"),
+            {"jid": job_id},
+        )
+        job.status = "queued"
+        job.processed = 0
+        job.error = None
+        session.add(job)
+        session.commit()
+
+    triggered, dispatch_error = await _trigger_github_actions(
+        job_id, triggered_by=current_user.email,
+    )
+    if not triggered:
+        with Session(engine) as session:
+            j = session.get(Job, job_id)
+            if j:
+                j.status = "failed"
+                j.error = (dispatch_error or "Retry dispatch failed.")[:500]
+                session.add(j)
+                session.commit()
+        raise HTTPException(status_code=502, detail=dispatch_error or "Dispatch failed.")
+    return {"ok": True, "job_id": job_id, "status": "queued"}
+
+
 @router.post("/api/bulk/clear")
 async def clear_all_jobs(current_user: User = Depends(require_auth)):
     """Delete every non-running job (and its EmailResult rows). Admin-only —

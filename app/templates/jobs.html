@@ -92,6 +92,15 @@
           <td class="px-4 py-3">
             <div class="flex items-center gap-3 justify-end">
               <a href="/jobs/{{ job.id }}" class="text-indigo-500 hover:underline text-xs font-medium">View</a>
+              {% if job.status == 'failed' %}
+              <button
+                hx-post="/api/bulk/{{ job.id }}/retry"
+                hx-confirm="Re-run job #{{ job.id }}? Existing results will be cleared and the workflow re-dispatched."
+                hx-on::after-request="if (event.detail.successful) window.location.reload()"
+                class="text-xs text-amber-600 hover:text-amber-700 hover:underline font-medium">
+                Retry
+              </button>
+              {% endif %}
               {% if job.status != 'running' %}
               <button
                 hx-delete="/api/bulk/{{ job.id }}"
