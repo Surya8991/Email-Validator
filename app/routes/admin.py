@@ -484,11 +484,11 @@ async def admin_cache_lookup(
     with Session(engine) as db:
         rows = db.exec(
             select(EmailCache.email, EmailCache.verdict, EmailCache.validated_at)
-            .where(EmailCache.email.in_(keys))  # type: ignore[attr-defined]
+            .where(func.lower(EmailCache.email).in_(keys))  # type: ignore[attr-defined]
         ).all()
 
     verdicts = {
-        r[0]: {
+        r[0].lower(): {
             "verdict": r[1],
             "validated_at": r[2].isoformat() if r[2] else None,
         }

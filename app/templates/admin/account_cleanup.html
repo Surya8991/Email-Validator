@@ -139,19 +139,44 @@
   const state = {
     filename: null,
     headers: [],
-    rows: [],            // parsed objects
+    rows: [],             // parsed objects
     emailCol: null,
-    verdicts: new Map(), // normalized email -> {verdict, validated_at}
+    verdicts: new Map(),  // normalized email -> {verdict, validated_at}
     kept: [],
-    dropped: [],         // {row, reason}
+    dropped: [],          // {row, reason}
+    verifiedOnly: [],
+    pendingEmails: [],
+    lookupInFlight: false,
   };
 
   const LOOKUP_BATCH = 5000;
   const DROP_VERDICTS = new Set(["invalid", "unknown"]);
+  const KEEP_VERDICTS = new Set(["valid", "risky", "catch-all", "catchall", "accept_all"]);
 
   const $ = (id) => document.getElementById(id);
   const show = (id) => $(id).classList.remove("hidden");
   const hide = (id) => $(id).classList.add("hidden");
+
+  function resetPostUpload() {
+    state.verdicts = new Map();
+    state.kept = [];
+    state.dropped = [];
+    state.verifiedOnly = [];
+    state.pendingEmails = [];
+    hide("step-breakdown");
+    hide("step-exports");
+    hide("progress-block");
+    $("progress-bar").style.width = "0%";
+    $("progress-label").textContent = "";
+    ["bd-valid","bd-risky","bd-invalid","bd-unknown","bd-notincache"]
+      .forEach((id) => { $(id).textContent = "0"; });
+    const vc = document.getElementById("verified-count");
+    if (vc) vc.textContent = "";
+    const pc = document.getElementById("pending-count");
+    if (pc) pc.textContent = "";
+    $("btn-lookup").disabled = false;
+    $("email-col").disabled = false;
+  }
 
   // ---- Step 1: file pick ----------------------------------------------------
   const dz = $("dropzone");
@@ -172,6 +197,7 @@
   function handleFile(file) {
     state.filename = file.name;
     $("sum-filename").textContent = file.name;
+    resetPostUpload();
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -224,13 +250,17 @@
     $("sum-missing").textContent = missing.toLocaleString();
   }
 
-  $("email-col").addEventListener("change", recomputeSummary);
+  $("email-col").addEventListener("change", () => {
+    recomputeSummary();
+    // Column changed — verdicts were keyed off the old column, so wipe.
+    resetPostUpload();
+  });
 
   // ---- Step 2: cache lookup -------------------------------------------------
   $("btn-lookup").addEventListener("click", async () => {
+    if (state.lookupInFlight) return;
     const col = state.emailCol;
     if (!col) { alert("Pick an email column first."); return; }
-    state.verdicts = new Map();
 
     const uniqueEmails = [];
     const seen = new Set();
@@ -243,9 +273,17 @@
       return;
     }
 
+    // Build into a local map; only swap into state.verdicts on full success.
+    const nextVerdicts = new Map();
+
+    state.lookupInFlight = true;
+    hide("step-exports");
     show("progress-block");
     show("step-breakdown");
     $("btn-lookup").disabled = true;
+    $("btn-filter").disabled = true;
+    $("email-col").disabled = true;
+    $("progress-bar").style.width = "0%";
 
     let done = 0;
     for (let i = 0; i < uniqueEmails.length; i += LOOKUP_BATCH) {
@@ -260,11 +298,13 @@
         const data = await resp.json();
         const map = data.verdicts || {};
         for (const [k, v] of Object.entries(map)) {
-          state.verdicts.set(k.toLowerCase(), v);
+          nextVerdicts.set(k.toLowerCase(), v);
         }
       } catch (e) {
         alert("Cache lookup failed mid-batch: " + e.message + "\nReload and try a smaller file.");
+        state.lookupInFlight = false;
         $("btn-lookup").disabled = false;
+        $("email-col").disabled = false;
         return;
       }
       done += slice.length;
@@ -273,8 +313,11 @@
       $("progress-label").textContent = `Looked up ${done.toLocaleString()} / ${uniqueEmails.length.toLocaleString()} unique emails`;
     }
 
+    state.verdicts = nextVerdicts;
+    state.lookupInFlight = false;
     updateBreakdown(uniqueEmails);
     $("btn-lookup").disabled = false;
+    $("btn-filter").disabled = false;
   });
 
   function updateBreakdown(uniqueEmails) {
@@ -284,7 +327,8 @@
       const v = state.verdicts.get(em);
       if (!v) { counts.notincache++; state.pendingEmails.push(em); continue; }
       if (v.verdict in counts) counts[v.verdict]++;
-      else { counts.notincache++; state.pendingEmails.push(em); }
+      else if (KEEP_VERDICTS.has(v.verdict)) counts.risky++;  // catch-all etc.
+      else counts.unknown++;
     }
     $("bd-valid").textContent = counts.valid.toLocaleString();
     $("bd-risky").textContent = counts.risky.toLocaleString();
