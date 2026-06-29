@@ -74,47 +74,35 @@ def _bootstrap_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """All blocking startup DB ops run in parallel under a SINGLE 4s ceiling.
+    """Startup: skip heavy DB ops on Vercel (Hobby 10s cold-start budget).
 
-    Previous version awaited each op sequentially with its own 4s timeout,
-    so worst-case lifespan was 12s — already over Vercel Hobby's 10s budget.
-    A cold-start instance with a slow first query on Neon would 504 every
-    request it ever got. Now total lifespan is capped at 4s regardless of
-    how many ops we add; sub-tasks that don't finish are cancelled and just
-    retry on the next cold start (each op is idempotent).
+    create_db_tables / _bootstrap_admin / backfill_team_owners are run by
+    the db_init GitHub Actions workflow on every push to main instead.
+    On local dev (no VERCEL env var) they still run at startup as before.
     """
     import asyncio
+    import os
 
-    async def _run(fn):
-        try:
-            await asyncio.to_thread(fn)
-            return (fn.__name__, "ok", None)
-        except Exception as e:  # noqa: BLE001
-            return (fn.__name__, "error", repr(e))
+    if not os.getenv("VERCEL"):
+        async def _run(fn):
+            try:
+                await asyncio.to_thread(fn)
+                return (fn.__name__, "ok", None)
+            except Exception as e:  # noqa: BLE001
+                return (fn.__name__, "error", repr(e))
 
-    async def _phase_one():
-        # Schema first — bootstrap + backfill both depend on tables existing.
-        return await _run(create_db_tables)
-
-    async def _phase_two():
-        # These two are independent of each other and run in parallel after schema.
-        return await asyncio.gather(_run(_bootstrap_admin), _run(backfill_team_owners))
-
-    try:
-        # Whole pipeline must finish within 4s. Phase one ~1-2s on warm DB,
-        # leaves ~2-3s for phase two — both still well under Vercel's 10s budget
-        # plus the rest of cold-start overhead.
         async def _pipeline():
-            r1 = await _phase_one()
-            r2 = await _phase_two()
+            r1 = await _run(create_db_tables)
+            r2 = await asyncio.gather(_run(_bootstrap_admin), _run(backfill_team_owners))
             return [r1, *r2]
 
-        results = await asyncio.wait_for(_pipeline(), timeout=4.0)
-        for name, status, err in results:
-            if status != "ok":
-                logger.warning("[startup] %s %s: %s", name, status, err)
-    except TimeoutError:
-        logger.warning("[startup] DB ops exceeded 4s — continuing; will retry on next cold start")
+        try:
+            results = await asyncio.wait_for(_pipeline(), timeout=4.0)
+            for name, status, err in results:
+                if status != "ok":
+                    logger.warning("[startup] %s %s: %s", name, status, err)
+        except TimeoutError:
+            logger.warning("[startup] DB ops exceeded 4s — continuing")
 
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield

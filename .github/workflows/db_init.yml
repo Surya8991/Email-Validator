@@ -1,0 +1,42 @@
+name: DB Init (post-deploy)
+
+# Runs create_db_tables + lightweight migrations + admin bootstrap on every
+# push to main, so those ops don't have to run inside the Vercel cold start.
+# Vercel Hobby caps function invocations at 10s — moving these ops here cuts
+# cold-start time from ~6s to ~2s, keeping every request well under the limit.
+#
+# Required secrets (same ones bulk_process uses):
+#   DATABASE_URL   — Neon / Postgres connection string
+#
+# Optional secrets (only needed on first deploy or if you change admin creds):
+#   ADMIN_EMAIL      — initial admin account email
+#   ADMIN_PASSWORD   — initial admin + superadmin password
+#   SUPERADMIN_EMAIL — promoted/created as superadmin on every run (idempotent)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run DB init
+        run: python scripts/db_init.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          SUPERADMIN_EMAIL: ${{ secrets.SUPERADMIN_EMAIL }}
