@@ -87,10 +87,12 @@
     {% if not recent_jobs %}
     <p class="px-5 py-6 text-sm text-gray-400 text-center">No bulk jobs yet. <a href="/validate" class="text-indigo-500 hover:underline">Upload a CSV →</a></p>
     {% else %}
+    {% set is_admin = current_user and current_user.role in ('admin', 'superadmin') %}
     <table class="w-full text-sm">
       <thead class="bg-gray-50 dark:bg-gray-800/50">
         <tr>
           <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
+          {% if is_admin %}<th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">User</th>{% endif %}
           <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">File</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Progress</th>
           <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
@@ -102,6 +104,11 @@
         {% for job in recent_jobs %}
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
           <td class="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">#{{ job.id }}</td>
+          {% if is_admin %}
+          <td class="px-4 py-3 text-gray-600 dark:text-gray-300 text-xs max-w-40 truncate" title="{{ job.user_email or '—' }}">
+            {{ job.user_email or '—' }}
+          </td>
+          {% endif %}
           <td class="px-4 py-3 text-gray-600 dark:text-gray-300 max-w-32 truncate">{{ job.filename or '-' }}</td>
           <td class="px-4 py-3 text-gray-500 dark:text-gray-400">{{ job.processed }}/{{ job.total }}</td>
           <td class="px-4 py-3">
