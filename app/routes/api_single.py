@@ -1,14 +1,15 @@
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.auth import get_current_user
+from app.auth import require_auth
 from app.core.validator import validate_with_cache
 from app.db import engine
+from app.models import User
 from app.schemas import ProviderResult, SingleVerifyRequest, SingleVerifyResponse
 from app.templating import templates
 
@@ -25,7 +26,10 @@ def _confidence(verdict: str, providers: dict[str, ProviderResult]) -> int:
 
 
 @router.post("/api/verify", response_model=SingleVerifyResponse)
-async def verify_single_json(req: SingleVerifyRequest):
+async def verify_single_json(
+    req: SingleVerifyRequest,
+    current_user: User = Depends(require_auth),
+):
     t0 = time.monotonic()
     verdict, providers, cache_row = await validate_with_cache(
         req.email, req.providers, req.strategy, ttl_days=req.cache_ttl_days
@@ -44,7 +48,10 @@ async def verify_single_json(req: SingleVerifyRequest):
 
 
 @router.post("/verify/htmx", response_class=HTMLResponse)
-async def verify_single_htmx(request: Request):
+async def verify_single_htmx(
+    request: Request,
+    current_user: User = Depends(require_auth),
+):
     form = await request.form()
     email = str(form.get("email", ""))
     providers_raw = form.getlist("providers")
@@ -57,9 +64,8 @@ async def verify_single_htmx(request: Request):
     except (ValueError, TypeError):
         ttl_days = None
 
-    with Session(engine) as db:
-        current_user = get_current_user(request, db)
-        if current_user and current_user.validation_limit is not None:
+    if current_user.validation_limit is not None:
+        with Session(engine) as db:
             month_start = datetime.utcnow().replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )

@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -18,6 +19,13 @@ from app.schemas import BulkJobResponse, BulkStatusResponse
 from app.workers.bulk_worker import process_bulk_job
 
 logger = logging.getLogger(__name__)
+
+_VALID_VERDICTS = {"all", "valid", "invalid", "risky", "unknown"}
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB hard cap on bulk uploads
+
+
+def _is_privileged(user: User) -> bool:
+    return user.role in ("admin", "superadmin")
 
 
 def _looks_like_xlsx(data: bytes, filename: str) -> bool:
@@ -97,18 +105,6 @@ async def _trigger_github_actions(
         return False, msg
 
 
-async def _dispatch_then_fallback(
-    job_id: int, filepath: str, email_column: str,
-    providers: list[str], strategy: str, ttl: int | None,
-) -> None:
-    """Background task: try GitHub Actions first; if that fails, run in-process."""
-    ok, _ = await _trigger_github_actions(job_id)
-    if ok:
-        return
-    logger.info("GitHub Actions unavailable for job %s — falling back to in-process", job_id)
-    await process_bulk_job(job_id, filepath, email_column, providers, strategy, ttl)
-
-
 @router.post("/api/bulk", response_model=BulkJobResponse)
 async def create_bulk_job(
     background_tasks: BackgroundTasks,
@@ -117,10 +113,16 @@ async def create_bulk_job(
     providers: str = Form(default="bouncify"),
     strategy: str = Form(default="bouncify_only"),
     cache_ttl_days: int = Form(default=0),
+    current_user: User = Depends(require_auth),
 ):
     contents = await file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file.")
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
+        )
 
     # Accept .xlsx / .xlsm by converting to CSV; otherwise decode as text.
     if _looks_like_xlsx(contents, file.filename or ""):
@@ -144,26 +146,30 @@ async def create_bulk_job(
                 ),
             )
 
-    if settings.max_bulk_emails > 0:
-        row_count = csv_str.count("\n")
-        if row_count > settings.max_bulk_emails:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"File exceeds {settings.max_bulk_emails} email limit. "
-                    "Reduce the size or raise MAX_BULK_EMAILS."
-                ),
-            )
+    # Real row count from the CSV parser (handles missing trailing newline,
+    # excludes header, handles embedded newlines inside quoted fields).
+    reader = csv.reader(io.StringIO(csv_str))
+    parsed_rows = sum(1 for _ in reader)
+    row_count = max(0, parsed_rows - 1)
+    if settings.max_bulk_emails > 0 and row_count > settings.max_bulk_emails:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File exceeds {settings.max_bulk_emails} email limit. "
+                "Reduce the size or raise MAX_BULK_EMAILS."
+            ),
+        )
 
-    # Write CSV to disk for local BackgroundTask fallback (always CSV now, regardless of source)
     upload_dir = _upload_dir()
     os.makedirs(upload_dir, exist_ok=True)
-    filepath = os.path.join(upload_dir, f"upload_{id(contents)}.csv")
+    # uuid4 — collision-free across concurrent uploads; id() reuses across GC.
+    filepath = os.path.join(upload_dir, f"upload_{uuid4().hex}.csv")
     with open(filepath, "w", encoding="utf-8", newline="") as f:
         f.write(csv_str)
 
     with Session(engine) as session:
         job = Job(
+            user_id=current_user.id,
             strategy=strategy,
             providers=providers,
             filename=file.filename,
@@ -171,25 +177,18 @@ async def create_bulk_job(
         )
         session.add(job)
         session.commit()
-        # job.id is populated by the commit; no second roundtrip needed.
         job_id = job.id
 
-    ttl: int | None = cache_ttl_days if cache_ttl_days > 0 else (0 if cache_ttl_days == 0 else None)
+    ttl: int | None = cache_ttl_days if cache_ttl_days >= 0 else None
 
     # IMPORTANT: on Vercel serverless, the function process is terminated as
     # soon as the response is sent — FastAPI BackgroundTasks added at that
     # point do NOT reliably run. So we dispatch INLINE (a fast HTTP POST to
-    # GitHub's API, typically <1s) before returning. The in-process fallback
-    # is only useful locally where the server stays alive; on Vercel it would
-    # be killed mid-run anyway.
+    # GitHub's API, typically <1s) before returning.
     triggered, dispatch_error = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
     response_status = "queued"
     if not triggered:
         if os.getenv("VERCEL"):
-            # On Vercel the in-process fallback can't run (function is killed
-            # the moment we return). A silent `queued` row hangs in the UI
-            # forever — mark the job `failed` with the exact reason returned
-            # by GitHub so the operator can fix it without diving into logs.
             reason = dispatch_error or "GitHub Actions dispatch failed (no reason captured)."
             logger.warning("Job %s: %s", job_id, reason)
             with Session(engine) as session:
@@ -201,8 +200,6 @@ async def create_bulk_job(
                     session.commit()
             response_status = "failed"
         else:
-            # Local dev: BackgroundTasks survives because uvicorn keeps the
-            # process alive after the response. Use it as a fallback worker.
             background_tasks.add_task(
                 process_bulk_job, job_id, filepath, email_column,
                 providers.split(","), strategy, ttl,
@@ -257,16 +254,26 @@ def download_csv_template():
 
 
 @router.get("/api/bulk/{job_id}", response_model=BulkStatusResponse)
-async def get_bulk_status(job_id: int):
+async def get_bulk_status(
+    job_id: int,
+    current_user: User = Depends(require_auth),
+):
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        results = session.exec(select(EmailResult).where(EmailResult.job_id == job_id)).all()
+        if not _is_privileged(current_user) and job.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        # Aggregate counts at the DB rather than loading every EmailResult row.
+        rows = session.execute(
+            text("SELECT verdict, COUNT(*) FROM emailresult WHERE job_id = :jid GROUP BY verdict"),
+            {"jid": job_id},
+        ).fetchall()
 
     summary: dict[str, int] = {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
-    for r in results:
-        summary[r.verdict] = summary.get(r.verdict, 0) + 1
+    for verdict, cnt in rows:
+        if verdict in summary:
+            summary[verdict] = cnt
 
     download_url = f"/api/bulk/{job_id}/download" if job.status == "done" else None
     return BulkStatusResponse(
@@ -290,13 +297,13 @@ async def delete_job(job_id: int, current_user: User = Depends(require_auth)):
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        if not _is_privileged(current_user) and job.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Job not found")
         if job.status == "running":
             raise HTTPException(
                 status_code=409,
                 detail="Job is currently running. Wait for it to finish or fail.",
             )
-        # EmailResult.job_id has no ON DELETE CASCADE in the model, so wipe
-        # explicitly. Single DELETE is cheap on Neon with the implicit index.
         session.execute(
             text("DELETE FROM emailresult WHERE job_id = :jid"),
             {"jid": job_id},
@@ -310,13 +317,12 @@ async def delete_job(job_id: int, current_user: User = Depends(require_auth)):
 async def clear_all_jobs(current_user: User = Depends(require_auth)):
     """Delete every non-running job (and its EmailResult rows). Admin-only —
     history is shared across users in this app."""
-    if current_user.role not in ("admin", "superadmin"):
+    if not _is_privileged(current_user):
         raise HTTPException(status_code=403, detail="Admin only")
     with Session(engine) as session:
         running = session.execute(
             text("SELECT COUNT(*) FROM job WHERE status = 'running'")
         ).scalar() or 0
-        # Wipe results for any job we're about to delete.
         session.execute(text(
             "DELETE FROM emailresult WHERE job_id IN "
             "(SELECT id FROM job WHERE status != 'running')"
@@ -329,10 +335,18 @@ async def clear_all_jobs(current_user: User = Depends(require_auth)):
 
 
 @router.get("/api/bulk/{job_id}/download")
-async def download_bulk(job_id: int, verdict: str = "all"):
+async def download_bulk(
+    job_id: int,
+    verdict: str = "all",
+    current_user: User = Depends(require_auth),
+):
+    if verdict not in _VALID_VERDICTS:
+        raise HTTPException(status_code=400, detail="Invalid verdict filter.")
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if not job or job.status != "done":
+            raise HTTPException(status_code=404, detail="Results not ready")
+        if not _is_privileged(current_user) and job.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Results not ready")
         results = session.exec(
             select(EmailResult).where(EmailResult.job_id == job_id)
@@ -347,8 +361,8 @@ async def download_bulk(job_id: int, verdict: str = "all"):
         try:
             pd = json.loads(results[0].provider_data)
             provider_cols = [f"{p}_status" for p in pd]
-        except Exception:
-            pass
+        except (ValueError, TypeError) as e:
+            logger.warning("download_bulk: bad provider_data on first row of job %s: %s", job_id, e)
 
     fieldnames = ["email", "verdict"] + provider_cols + ["from_cache"]
     buf = io.StringIO()
@@ -360,7 +374,7 @@ async def download_bulk(job_id: int, verdict: str = "all"):
             pd = json.loads(r.provider_data)
             for p, data in pd.items():
                 row[f"{p}_status"] = data.get("status", "")
-        except Exception:
+        except (ValueError, TypeError):
             pass
         writer.writerow(row)
 

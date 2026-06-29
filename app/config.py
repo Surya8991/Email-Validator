@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-me-in-production"
     production: bool = False
 
+    # Canonical public origin used for outbound links (password reset, invites).
+    # MUST be set in production — never trust request.base_url, which derives from
+    # the Host header an attacker can spoof through a misconfigured proxy.
+    base_url: str = ""
+
     # Bootstrap admin — used only if User table is empty on startup
     admin_email: str = ""
     admin_password: str = ""

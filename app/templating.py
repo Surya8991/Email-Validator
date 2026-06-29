@@ -5,7 +5,7 @@ visible everywhere. Previously each route file created its own
 `Jinja2Templates(...)` instance, so a filter would have to be re-registered
 in four places.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
@@ -25,7 +25,7 @@ def ist(value: datetime | None, fmt: str = "%Y-%m-%d %H:%M") -> str:
         return ""
     # Treat naive datetimes as UTC (which is what we write to the DB).
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     return value.astimezone(_IST).strftime(fmt)
 
 
@@ -50,8 +50,8 @@ def job_eta_seconds(processed: int, total: int, started_at: datetime | None) -> 
     if not started_at or total <= 0 or processed <= 0 or processed >= total:
         return None
     if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
-    elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        started_at = started_at.replace(tzinfo=UTC)
+    elapsed = (datetime.now(UTC) - started_at).total_seconds()
     if elapsed <= 0:
         return None
     rate = processed / elapsed  # emails/sec

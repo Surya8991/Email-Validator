@@ -23,6 +23,13 @@ htmlcov/
 node_modules/
 .superpowers/
 
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+*.bak
+*.swp
+
 # Local data & ad-hoc scripts (never push)
 contacts_*.csv
 validation_results.json

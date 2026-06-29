@@ -3,3 +3,11 @@ target-version = "py312"
 
 [lint]
 select = ["E", "F", "I", "UP"]
+
+[lint.per-file-ignores]
+# Inline HTML styles in transactional email templates exceed 100 chars by
+# design — splitting them adds noise without improving readability.
+"app/services/email.py" = ["E501"]
+# Help-text strings for GitHub-API dispatch errors — kept on one line so
+# the operator-facing message lands in the UI as a single paragraph.
+"app/routes/api_bulk.py" = ["E501"]

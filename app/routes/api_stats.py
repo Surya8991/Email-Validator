@@ -47,7 +47,7 @@ def _domain_sql() -> str:
 
 
 @router.get("/api/stats")
-def get_stats():
+def get_stats(current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
         total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
@@ -140,7 +140,7 @@ def clear_all_cache(current_user: User = Depends(require_auth)):
 
 
 @router.get("/api/domain/{domain}")
-def get_domain_reputation(domain: str):
+def get_domain_reputation(domain: str, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         rows = session.execute(text("""
             SELECT verdict, COUNT(*) AS cnt FROM emailcache

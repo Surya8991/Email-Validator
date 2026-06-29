@@ -3,10 +3,13 @@
 ## Overview
 FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
+Current version: **0.10.0** (security hardening — see PROJECT_LOG.md Session 13).
+
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)
 - **HTTP:** httpx.AsyncClient (shared, lifespan-managed)
-- **Auth:** Session-based (HttpOnly cookie `ev_session`), SHA-256 hashed tokens, 7-day sliding TTL. `bcrypt` library directly (passlib incompatible with bcrypt>=5). **Failed-login lockout**: 5 wrong attempts → `User.locked_until` set 15 min ahead, returns 429 until expiry.
+- **Auth:** Session-based (HttpOnly cookie `ev_session`), SHA-256 hashed tokens, 7-day sliding TTL. `bcrypt` library directly (passlib incompatible with bcrypt>=5). **Failed-login lockout**: 5 wrong attempts → `User.locked_until` set 15 min ahead, returns 429 until expiry. **Per-IP rate limit** (`app/security/rate_limit.py`) on `/login` (10/60s), `/forgot-password` + `/register` (5/300s) — closes the login-enumeration gap where unknown emails bypassed the per-account lockout. Password change + reset revoke **all** existing sessions and issue a fresh cookie.
+- **Security middleware:** `SecurityHeadersMiddleware` in `app/main.py` sets `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, and HSTS (prod-only). Same middleware does an Origin/Referer cross-host check on every non-safe method — lightweight CSRF defence on top of `samesite="lax"`.
 - **Email:** stdlib `smtplib` in `app/services/email.py`, async via `asyncio.to_thread`. Gmail-friendly STARTTLS (587) or SMTPS (465). Every send is failure-isolated — `SMTP_HOST=""` silently disables all mail.
 - **Local validation:** email-validator, dnspython, disposable-email-domains
 - **Storage:** SQLModel + **PostgreSQL (Neon)** — persistent. SQLite used locally when DATABASE_URL is unset.
@@ -28,7 +31,8 @@ app/
   models.py        # DB tables: Job, EmailResult, EmailCache, ApiUsage, User, UserSession, Team, TeamMembership (with role: owner|member), UserInvite, PasswordReset, AuditLog, SystemSetting
   schemas.py       # Pydantic DTOs (request/response)
   providers/       # base.py, bouncify.py, zerobounce.py, neverbounce.py, hunter.py, local.py, registry.py
-  services/        # email.py — SMTP mailer + 4 transactional templates (invite/approval/reset/team-join)
+  security/        # rate_limit.py — in-memory per-IP token bucket (no Redis dep)
+  services/        # email.py — SMTP mailer + 4 transactional templates (invite/approval/reset/team-join). User-supplied fields html-escaped before interpolation.
   core/            # validator.py (strategies), csv_io.py, cache.py, retry.py
   routes/
     ui.py          # User-facing UI (auth-gated), /teams + join/cancel. Dashboard `/` has 30s in-process cache + 6s timeout on aggregates.
@@ -50,8 +54,9 @@ scripts/
   pre_push_check.sh # 38-check safety checklist (auto-runs via .githooks/pre-push)
 .github/
   workflows/
-    bulk_process.yml  # workflow_dispatch: triggered by api_bulk.py with job_id
+    bulk_process.yml  # workflow_dispatch: triggered by api_bulk.py with job_id. Receives inputs.job_id via env var (JOB_ID), not shell-interpolated.
     keep_warm.yml     # cron every 5 min: curls ${{ vars.APP_URL }}/api/health to keep Neon + Vercel function warm
+    ci.yml            # PR + push to main: ruff check, mypy app (non-blocking), pytest -q
 .githooks/
   pre-push         # Thin wrapper calling scripts/pre_push_check.sh
 ruff.toml          # Ruff config (replaces pyproject.toml [tool.ruff])
@@ -82,8 +87,9 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 - `BOUNCIFY_API_KEY` — primary provider
 - `DATABASE_URL` — Neon connection string (`postgres://...` or `postgresql+psycopg2://...`)
 - `GITHUB_PAT` — fine-grained PAT, Actions: read/write (for bulk CSV processing). Without this, jobs sit at `queued` forever on Vercel.
-- `GITHUB_REPO` — `owner/repo` (default: `Surya8991/Email-Validator`)
+- `GITHUB_REPO` — `owner/repo` of the worker repo (blank by default — `.env.example` no longer hardcodes the upstream repo so forks don't dispatch to it).
 - `SECRET_KEY` — random string for session signing (generate: `openssl rand -hex 32`)
+- `BASE_URL` — canonical public origin (e.g. `https://validator.example.com`). Used for all outbound links (password reset, invites, approvals). **Must be set in production** — never trust the request `Host` header behind a proxy. Falls back to `request.base_url` for local dev only.
 
 ### SMTP (outbound mail — Gmail recommended)
 - `SMTP_HOST` (e.g. `smtp.gmail.com`) — leave blank to disable all email
@@ -182,6 +188,9 @@ Templates: `GET /api/bulk/template.csv` and `GET /api/bulk/template.xlsx` (openp
 - **`require_auth`**: raises `RequiresAuth` exception → Starlette handler redirects to `/login` (can't return RedirectResponse from FastAPI Depends)
 - **`require_admin`**: allows `admin` or `superadmin` roles
 - **`require_superadmin`**: strict — `superadmin` only (promote/demote actions)
+- **Last-superadmin guard:** `/admin/users/{id}/demote` and `/deactivate` refuse to remove the last active superadmin so the system can't be left without a privileged user. Demote covers `admin → user` AND `superadmin → user`.
+- **IDOR-safe bulk endpoints:** `Job.user_id` stamped on creation; `/api/bulk/{id}` status, download, and delete return 404 unless `job.user_id == current_user.id` (admin/superadmin sees all).
+- **Session rotation:** password change (`/profile/password`) and password reset (`/reset-password/{token}`) revoke every existing `UserSession` row and issue a fresh cookie. Phished sessions can't outlive a reset.
 - **Teams flow:** admin creates team → user requests join (`/teams/{id}/request`) → admin approves/rejects (`/admin/teams/{id}/approve|reject/{mid}`, both now email the user when SMTP is configured)
 - **Team ownership:** creator is auto-added as owner (`TeamMembership.role="owner"`); ownership transferrable to any active member via `POST /admin/teams/{id}/transfer/{user_id}`; owner cannot be removed (must transfer first or delete the team); `backfill_team_owners()` in `app/db.py` retro-adds owner rows for legacy teams on startup
 - **bcrypt directly** — `passlib[bcrypt]` raises ValueError during backend init with bcrypt>=5; use `bcrypt>=4.0.0` and call `bcrypt.hashpw`/`checkpw` directly

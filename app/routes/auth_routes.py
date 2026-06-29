@@ -19,8 +19,8 @@ from app.auth import (
 from app.config import settings
 from app.db import get_session
 from app.models import PasswordReset, SystemSetting, User, UserInvite, UserSession
+from app.security.rate_limit import rate_limit
 from app.services.email import (
-    send_account_approved_email,
     send_password_reset_email,
     send_pending_approval_notice,
 )
@@ -36,8 +36,24 @@ LOGIN_LOCKOUT_MINUTES = 15
 router = APIRouter()
 
 
+def _public_base_url(request: Request) -> str:
+    """Origin used for outbound email links. Prefer the env-pinned BASE_URL so
+    a spoofed Host header in a misconfigured proxy can't redirect victims to
+    an attacker's domain. Falls back to request.base_url for local dev only.
+    """
+    if settings.base_url:
+        return settings.base_url.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def _revoke_all_sessions(user_id: int, db: Session) -> None:
+    sessions = db.exec(select(UserSession).where(UserSession.user_id == user_id)).all()
+    for s in sessions:
+        db.delete(s)
 
 
 def _verify_password(plain: str, hashed: str) -> bool:
@@ -56,10 +72,14 @@ async def login_post(
     password: str = Form(...),
     db: Session = Depends(get_session),
 ):
+    # Per-IP burst limit applies whether or not the email exists, so a brute-force
+    # scan against unknown emails (which previously bypassed the account lockout)
+    # now gets throttled too.
+    rate_limit(request, "login", max_hits=10, window_seconds=60)
+
     user = db.exec(select(User).where(User.email == email.strip().lower())).first()
     now = datetime.utcnow()
 
-    # If the account is locked, refuse before checking the password.
     if user and user.locked_until and user.locked_until > now:
         mins_left = max(1, int((user.locked_until - now).total_seconds() // 60))
         return templates.TemplateResponse(request, "auth/login.html", {
@@ -113,6 +133,7 @@ async def register_post(
     confirm_password: str = Form(...),
     db: Session = Depends(get_session),
 ):
+    rate_limit(request, "register", max_hits=5, window_seconds=300)
     reg_open = db.get(SystemSetting, "registration_open")
     if reg_open and reg_open.value == "0":
         return templates.TemplateResponse(request, "auth/register.html", {
@@ -148,8 +169,7 @@ async def register_post(
             admins = db.exec(
                 select(User).where(User.role.in_(["admin", "superadmin"]), User.is_active == True)  # noqa: E712
             ).all()
-            base_url = str(request.base_url).rstrip("/")
-            admin_url = f"{base_url}/admin/users?status=pending"
+            admin_url = f"{_public_base_url(request)}/admin/users?status=pending"
             await asyncio.gather(
                 *(send_pending_approval_notice(a.email, new_email, admin_url) for a in admins),
                 return_exceptions=True,
@@ -193,6 +213,15 @@ async def profile_change_email(
     clash = db.exec(select(User).where(User.email == new_email)).first()
     if clash:
         return RedirectResponse(url="/profile?err=email_taken", status_code=302)
+    from app.models import AuditLog
+    db.add(AuditLog(
+        action="profile.email.change",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target_type="user",
+        target_id=str(current_user.id),
+        details=f"new_email={new_email}",
+    ))
     current_user.email = new_email
     db.commit()
     return RedirectResponse(url="/profile?saved=email", status_code=302)
@@ -213,9 +242,29 @@ async def profile_change_password(
         return RedirectResponse(url="/profile?err=mismatch", status_code=302)
     if len(new_password) < 8:
         return RedirectResponse(url="/profile?err=too_short", status_code=302)
+    from app.models import AuditLog
+    db.add(AuditLog(
+        action="profile.password.change",
+        actor_id=current_user.id,
+        actor_email=current_user.email,
+        target_type="user",
+        target_id=str(current_user.id),
+    ))
     current_user.password_hash = _hash_password(new_password)
+    # Phished sessions must NOT survive a password change.
+    _revoke_all_sessions(current_user.id, db)
+    new_token = create_user_session(current_user, db)
     db.commit()
-    return RedirectResponse(url="/profile?saved=password", status_code=302)
+    resp = RedirectResponse(url="/profile?saved=password", status_code=302)
+    resp.set_cookie(
+        key=SESSION_COOKIE,
+        value=new_token,
+        httponly=True,
+        samesite="lax",
+        max_age=SESSION_TTL_DAYS * 86400,
+        secure=settings.production,
+    )
+    return resp
 
 
 @router.post("/profile/sessions/revoke-all")
@@ -280,6 +329,7 @@ async def forgot_password_post(
     email: str = Form(...),
     db: Session = Depends(get_session),
 ):
+    rate_limit(request, "forgot-password", max_hits=5, window_seconds=300)
     email_norm = email.strip().lower()
     user = db.exec(select(User).where(User.email == email_norm)).first()
 
@@ -303,8 +353,7 @@ async def forgot_password_post(
         ))
         db.commit()
 
-        base_url = str(request.base_url).rstrip("/")
-        reset_url = f"{base_url}/reset-password/{raw_token}"
+        reset_url = f"{_public_base_url(request)}/reset-password/{raw_token}"
         try:
             await send_password_reset_email(user.email, reset_url, PASSWORD_RESET_TTL_MINUTES)
         except Exception as e:  # noqa: BLE001
@@ -314,7 +363,9 @@ async def forgot_password_post(
 
 
 def _resolve_reset(token: str, db: Session) -> PasswordReset | None:
-    pr = db.exec(select(PasswordReset).where(PasswordReset.token_hash == _hash_token(token))).first()
+    pr = db.exec(
+        select(PasswordReset).where(PasswordReset.token_hash == _hash_token(token))
+    ).first()
     if not pr or pr.used_at or pr.expires_at < datetime.utcnow():
         return None
     return pr
@@ -360,6 +411,8 @@ async def reset_password_post(
 
     user.password_hash = _hash_password(password)
     pr.used_at = datetime.utcnow()
+    # Any session opened before the reset is now untrusted — drop them all.
+    _revoke_all_sessions(user.id, db)
     db.commit()
     return templates.TemplateResponse(request, "auth/reset_password.html", {"success": True})
 

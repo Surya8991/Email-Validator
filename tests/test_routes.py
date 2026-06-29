@@ -11,14 +11,14 @@ def test_health(client):
     assert isinstance(data["providers_enabled"], list)
 
 
-def test_single_verify_json(client):
+def test_single_verify_json(auth_client):
     mock_result = ProviderResult(status="valid", sub_status="")
     # validate_with_cache returns (verdict, providers, cache_row)
     with patch(
         "app.routes.api_single.validate_with_cache", new_callable=AsyncMock
     ) as mock_validate:
         mock_validate.return_value = ("valid", {"local": mock_result}, None)
-        resp = client.post("/api/verify", json={
+        resp = auth_client.post("/api/verify", json={
             "email": "test@example.com",
             "providers": ["local"],
             "strategy": "bouncify_only",
@@ -31,7 +31,7 @@ def test_single_verify_json(client):
     assert data["cached"] is False
 
 
-def test_single_verify_json_cache_hit(client):
+def test_single_verify_json_cache_hit(auth_client):
     from datetime import datetime
 
     from app.models import EmailCache
@@ -50,7 +50,7 @@ def test_single_verify_json_cache_hit(client):
         "app.routes.api_single.validate_with_cache", new_callable=AsyncMock
     ) as mock_validate:
         mock_validate.return_value = ("valid", {"bouncify": mock_result}, fake_cache)
-        resp = client.post("/api/verify", json={
+        resp = auth_client.post("/api/verify", json={
             "email": "test@example.com",
             "providers": ["bouncify"],
             "strategy": "bouncify_only",
@@ -62,13 +62,13 @@ def test_single_verify_json_cache_hit(client):
     assert data["expires_at"] is not None
 
 
-def test_single_verify_htmx(client):
+def test_single_verify_htmx(auth_client):
     mock_result = ProviderResult(status="invalid", sub_status="no_mx")
     with patch(
         "app.routes.api_single.validate_with_cache", new_callable=AsyncMock
     ) as mock_validate:
         mock_validate.return_value = ("invalid", {"local": mock_result}, None)
-        resp = client.post("/verify/htmx", data={
+        resp = auth_client.post("/verify/htmx", data={
             "email": "bad@nxdomain.invalid",
             "providers": "local",
             "strategy": "bouncify_only",
@@ -77,7 +77,7 @@ def test_single_verify_htmx(client):
     assert "invalid" in resp.text
 
 
-def test_single_verify_htmx_shows_cached_badge(client):
+def test_single_verify_htmx_shows_cached_badge(auth_client):
     from datetime import datetime
 
     from app.models import EmailCache
@@ -96,7 +96,7 @@ def test_single_verify_htmx_shows_cached_badge(client):
         "app.routes.api_single.validate_with_cache", new_callable=AsyncMock
     ) as mock_validate:
         mock_validate.return_value = ("valid", {"bouncify": mock_result}, fake_cache)
-        resp = client.post("/verify/htmx", data={
+        resp = auth_client.post("/verify/htmx", data={
             "email": "cached@example.com",
             "providers": "bouncify",
             "strategy": "bouncify_only",

@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-27 (Session 12). Current VERSION: **0.9.3**
+> Last updated: 2026-06-29 (Session 13). Current VERSION: **0.10.0**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -48,6 +48,133 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+
+---
+
+## Session 13 — 2026-06-29 — v0.10.0 security hardening
+
+Sweep of the 4-agent audit findings. All test-passing fixes landed in one
+release; refactors that require design decisions (carve out `services/`,
+move CSV to object storage, swap GHA dispatch for QStash/Inngest) deferred.
+
+**Auth + IDOR (critical):**
+- `/api/bulk` create / status / download / delete now require auth.
+  Ownership check on status + download + delete (`job.user_id ==
+  current_user.id`); admin/superadmin still sees all. Job rows now stamp
+  `user_id = current_user.id` on creation.
+- `/api/verify`, `/verify/htmx`, `/api/stats`, `/api/domain/{domain}` all
+  gained `Depends(require_auth)`. Anonymous credit-drain and stats leak
+  closed. Per-user `validation_limit` now applies in `/verify/htmx`
+  (previously bypassed by anonymous callers).
+
+**Sessions + reset flow:**
+- Password change (`/profile/password`) and password reset
+  (`/reset-password/{token}`) now revoke ALL existing `UserSession` rows
+  and issue a fresh cookie. Phished sessions can't outlive a reset.
+- Audit-log entries for self-service email + password changes
+  (`profile.email.change`, `profile.password.change`).
+
+**CSRF + security headers:**
+- `SecurityHeadersMiddleware` in `app/main.py` adds
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
+  `Permissions-Policy`, and HSTS when `PRODUCTION=true`.
+- Same middleware does a CSRF Origin/Referer cross-host check on every
+  non-safe method. `samesite="lax"` cookie still in place — Origin check
+  catches the remaining edge cases without adding a token system.
+
+**Rate limiting:**
+- New `app/security/rate_limit.py` — in-memory per-IP token bucket. No
+  new deps. Applied to `/login` (10/60s), `/forgot-password` (5/300s),
+  `/register` (5/300s). Closes the login-enumeration gap where unknown
+  emails bypassed the per-account lockout.
+- Serverless caveat: counters reset per cold-start. Use Redis for a hard
+  cap across regions if you need it.
+
+**Outbound-link integrity:**
+- New `BASE_URL` setting in `config.py`. All `request.base_url` uses in
+  password-reset, invite, approval, and team-decision emails now prefer
+  `settings.base_url` first (falls back to request.base_url for local
+  dev). Closes the Host-header poisoning vector that let an attacker
+  swap victim reset links to an attacker-controlled domain.
+
+**DB + bulk-job perf:**
+- `app/db.py` engine now uses `pool_pre_ping=True`, `pool_recycle=300`,
+  `connect_timeout=5` on Postgres. Neon idle-pause no longer 500s the
+  next request.
+- `/api/bulk/{job_id}` status: replaced "load all `EmailResult` rows
+  into memory + Python loop" with a `GROUP BY verdict` aggregate.
+- Uploads:
+  - `id(contents)` filenames → `uuid4().hex` (collision-free under
+    concurrency).
+  - `csv_str.count("\n")` row count → real CSV parse
+    (`sum(1 for _ in csv.reader)`) minus header. Handles missing
+    trailing newline and embedded newlines in quoted fields.
+  - 25 MB hard byte cap on upload payload.
+- Download `verdict` query param whitelisted against
+  `{all, valid, invalid, risky, unknown}`.
+
+**Last-superadmin guard:**
+- `/admin/users/{id}/demote` and `/admin/users/{id}/deactivate` refuse
+  to remove the last active superadmin (returns to `/admin/users`
+  with `invite_error=last_superadmin`). Demote also now covers
+  `admin → user` AND `superadmin → user` (was admin-only before).
+
+**Validator + email correctness:**
+- `app/core/validator.py:local_first` fixed `UnboundLocalError` when
+  `selected` contained only `"local"` and the result wasn't `invalid`.
+- `_majority_vote` now uses `_VERDICT_WEIGHT.get(k, 99)` to tolerate
+  provider-returned verdict strings outside the standard set.
+- `app/services/email.py:_send_sync` now gates `s.login(user, password)`
+  on both user AND password being set — previously crashed on
+  `SMTP_USER=` set + `SMTP_PASSWORD=` blank.
+- All user-supplied fields in HTML email templates run through
+  `html.escape()` (`inviter_email`, `new_user_email`, `team_name`,
+  every `*_url`). Prevents broken markup / template injection when a
+  display name contains `<` or `>`.
+
+**Workflow hardening:**
+- `.github/workflows/bulk_process.yml`: `inputs.job_id` now passed via
+  env var (`JOB_ID`) and quoted on the command line — no shell-eval
+  exposure even though dispatch is gated to `workflow_dispatch`.
+- New `.github/workflows/ci.yml`: runs `ruff check`, `mypy app`,
+  `pytest -q` on PR + push-to-main. mypy is `continue-on-error: true`
+  until the type drift is reconciled.
+- `.env.example`: `GITHUB_REPO=` blanked out (was hardcoded to
+  `Surya8991/Email-Validator`, so forks dispatched to the original
+  repo). Added `BASE_URL=` field with a doc line on why it's required
+  in production.
+- `/api/health` gained an optional `?deep=1` mode that probes the
+  Bouncify credits endpoint. Dead-key drift no longer slips past the
+  health gate when explicitly checked.
+
+**Cleanup:**
+- Removed dead `_dispatch_then_fallback` from `app/routes/api_bulk.py`
+  (orphaned after the inline-dispatch refactor).
+- `app/main.py`: `print(flush=True)` startup logs → `logger.warning`.
+  Root logger configured once with a sane format string.
+- `bare except:` swallowing in download_bulk replaced with typed
+  `(ValueError, TypeError)` + a logger line on the first-row case.
+
+**Test suite:** 26 → 26 still passing. Four `/api/verify` tests moved
+from `client` to `auth_client` fixture to satisfy the new auth gate.
+
+**.gitignore:** added `*.log`, `*.bak`, `*.swp`, `.DS_Store`, `Thumbs.db`.
+
+**Files touched:** 15 modified + 3 new
+(`.github/workflows/ci.yml`, `app/security/__init__.py`,
+`app/security/rate_limit.py`). +324 / -119 lines.
+
+**Audit-flagged but NOT changed (out of scope or wrong):**
+- Bouncify key still in local `.env` — must be rotated by the operator
+  (not in git history; can't be fixed by code).
+- `requirements.txt` upper bounds — needs a lock workflow decision.
+- `email_validator.db` "committed to history" — audit agent was wrong;
+  `git log -- email_validator.db` is empty. Already gitignored.
+- `services/` carve-out, `get_session` Depends everywhere,
+  `Job.csv_data` → object storage, GHA → QStash/Inngest — left for a
+  future architecture pass; each needs a design decision, not a
+  mechanical edit.
 
 ---
 

@@ -9,13 +9,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
-from app.templating import job_eta_seconds, templates
-
 from app.auth import require_auth
 from app.config import settings
 from app.db import engine, is_postgres
 from app.models import EmailCache, EmailResult, Job, Team, TeamMembership, User
 from app.providers.registry import get_enabled_providers
+from app.templating import job_eta_seconds, templates
 
 # Short-lived in-memory cache for the dashboard's expensive aggregate queries.
 # 30s TTL is enough that consecutive loads (e.g. browser-tab reopen, navigation)
@@ -296,7 +295,7 @@ async def jobs_list(request: Request, current_user: User = Depends(require_auth)
         jobs = await asyncio.wait_for(
             asyncio.to_thread(_list_jobs_lightweight), timeout=6.0,
         )
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+    except (TimeoutError, Exception):  # noqa: BLE001
         jobs = []
     return templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs,

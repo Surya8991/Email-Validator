@@ -15,11 +15,6 @@ from sqlmodel import Session, select
 from app.auth import require_admin, require_superadmin
 from app.config import settings
 from app.db import engine, is_postgres
-from app.services.email import (
-    send_account_approved_email,
-    send_invite_email,
-    send_team_join_decided_email,
-)
 from app.models import (
     ApiUsage,
     AuditLog,
@@ -34,6 +29,11 @@ from app.models import (
     UserSession,
 )
 from app.providers.registry import get_enabled_providers
+from app.services.email import (
+    send_account_approved_email,
+    send_invite_email,
+    send_team_join_decided_email,
+)
 from app.templating import templates
 
 INVITE_TTL_DAYS = 7
@@ -254,7 +254,7 @@ async def admin_activate_user(
             notify_email = user.email
 
     if was_inactive and notify_email and settings.smtp_host:
-        base_url = str(request.base_url).rstrip("/")
+        base_url = (settings.base_url or str(request.base_url)).rstrip("/")
         try:
             await send_account_approved_email(notify_email, f"{base_url}/login")
         except Exception as e:  # noqa: BLE001
@@ -272,10 +272,20 @@ async def admin_deactivate_user(
         return RedirectResponse(url="/admin/users", status_code=302)
     with Session(engine) as db:
         user = db.get(User, user_id)
-        if user:
-            user.is_active = False
-            _log_audit("user.deactivate", current_user, "user", str(user_id), user.email, db)
-            db.commit()
+        if not user:
+            return RedirectResponse(url="/admin/users", status_code=302)
+        # Never strip the last active superadmin out of the system.
+        last_super = (
+            user.role == "superadmin"
+            and _count_active_superadmins(db, exclude_user_id=user.id) == 0
+        )
+        if last_super:
+            return RedirectResponse(
+                url="/admin/users?invite_error=last_superadmin", status_code=302,
+            )
+        user.is_active = False
+        _log_audit("user.deactivate", current_user, "user", str(user_id), user.email, db)
+        db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
 
 
@@ -341,7 +351,7 @@ async def admin_send_invite(
         _log_audit("user.invite.send", current_user, "invite", email, f"role={role}", db)
         db.commit()
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = (settings.base_url or str(request.base_url)).rstrip("/")
     invite_url = f"{base_url}/invite/{raw_token}"
 
     # Try to deliver the invite via SMTP. If SMTP isn't configured or sending
@@ -440,6 +450,15 @@ async def admin_providers(request: Request, current_user: User = Depends(require
 
 # ── Superadmin: user role promotion ──────────────────────────────────────────
 
+def _count_active_superadmins(db: Session, exclude_user_id: int | None = None) -> int:
+    q = select(func.count()).select_from(User).where(
+        User.role == "superadmin", User.is_active == True  # noqa: E712
+    )
+    if exclude_user_id is not None:
+        q = q.where(User.id != exclude_user_id)
+    return db.exec(q).one() or 0
+
+
 @router.post("/users/{user_id}/promote")
 async def admin_promote_user(user_id: int, current_user: User = Depends(require_superadmin)):
     with Session(engine) as db:
@@ -455,7 +474,18 @@ async def admin_promote_user(user_id: int, current_user: User = Depends(require_
 async def admin_demote_user(user_id: int, current_user: User = Depends(require_superadmin)):
     with Session(engine) as db:
         user = db.get(User, user_id)
-        if user and user.id != current_user.id and user.role == "admin":
+        if not user or user.id == current_user.id:
+            return RedirectResponse(url="/admin/users", status_code=302)
+        # Never demote the last active superadmin — leaves the system unmanageable.
+        last_super = (
+            user.role == "superadmin"
+            and _count_active_superadmins(db, exclude_user_id=user.id) == 0
+        )
+        if last_super:
+            return RedirectResponse(
+                url="/admin/users?invite_error=last_superadmin", status_code=302,
+            )
+        if user.role in ("admin", "superadmin"):
             user.role = "user"
             _log_audit("user.demote", current_user, "user", str(user_id), user.email, db)
             db.commit()
@@ -583,7 +613,7 @@ async def _notify_team_decision(
     team = db.get(Team, team_id)
     if not user or not team:
         return
-    base_url = str(request.base_url).rstrip("/")
+    base_url = (settings.base_url or str(request.base_url)).rstrip("/")
     try:
         await send_team_join_decided_email(user.email, team.name, decision, base_url)
     except Exception as e:  # noqa: BLE001

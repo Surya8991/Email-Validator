@@ -14,7 +14,7 @@ def _majority_vote(results: dict[str, ProviderResult]) -> str:
         counts[r.status] = counts.get(r.status, 0) + 1
     if not counts:
         return "unknown"
-    top = max(counts, key=lambda k: (counts[k], -_VERDICT_WEIGHT[k]))
+    top = max(counts, key=lambda k: (counts[k], -_VERDICT_WEIGHT.get(k, 99)))
     return top
 
 
@@ -65,17 +65,19 @@ async def validate(
 
     if strategy == "local_first":
         local = selected.get("local")
+        local_result: ProviderResult | None = None
         if local:
             local_result = await local.verify(email)
-            if local_result.status in ("invalid",):
-                return local_result.status, {"local": local_result}
-        # Run remaining providers
+            if local_result.status == "invalid":
+                return "invalid", {"local": local_result}
         remaining = {n: p for n, p in selected.items() if n != "local"}
         if not remaining:
-            return local_result.status, {"local": local_result}  # type: ignore[possibly-undefined]
+            if local_result is None:
+                return "unknown", {}
+            return local_result.status, {"local": local_result}
         results: dict[str, ProviderResult] = {}
-        if local:
-            results["local"] = local_result  # type: ignore[possibly-undefined]
+        if local_result is not None:
+            results["local"] = local_result
         tasks = {name: p.verify(email) for name, p in remaining.items()}
         done = await asyncio.gather(*tasks.values())
         for name, result in zip(tasks.keys(), done):

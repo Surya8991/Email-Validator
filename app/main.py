@@ -1,11 +1,14 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.auth import RequiresAdmin, RequiresAuth, RequiresMaintenance
 from app.config import settings
@@ -13,6 +16,12 @@ from app.db import backfill_team_owners, create_db_tables
 from app.providers import registry
 from app.routes import admin as admin_router
 from app.routes import api_bulk, api_single, api_stats, auth_routes, health, ui
+
+logging.basicConfig(
+    level=settings.log_level.upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 _BASE_DIR = Path(__file__).parent.parent
 _STATIC_DIR = _BASE_DIR / "static"
@@ -103,9 +112,9 @@ async def lifespan(app: FastAPI):
         results = await asyncio.wait_for(_pipeline(), timeout=4.0)
         for name, status, err in results:
             if status != "ok":
-                print(f"[startup] {name} {status}: {err}", flush=True)
-    except asyncio.TimeoutError:
-        print("[startup] DB ops exceeded 4s — continuing; will retry on next cold start", flush=True)
+                logger.warning("[startup] %s %s: %s", name, status, err)
+    except TimeoutError:
+        logger.warning("[startup] DB ops exceeded 4s — continuing; will retry on next cold start")
 
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
     yield
@@ -115,10 +124,48 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Email Validator",
-    version="0.3.0",
+    version="0.10.0",
     lifespan=lifespan,
     docs_url=None,  # custom /docs with back button below
 )
+
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Defense-in-depth response headers + Origin-based CSRF check.
+
+    Origin check is a lightweight CSRF defence — for state-changing requests
+    we require the Origin header to match the request host. samesite="lax"
+    already blocks most cross-site POSTs; this catches the edge cases.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method not in _SAFE_METHODS:
+            origin = request.headers.get("origin") or request.headers.get("referer")
+            if origin:
+                try:
+                    origin_host = urlparse(origin).netloc
+                except ValueError:
+                    origin_host = ""
+                host = request.headers.get("host", "")
+                if origin_host and host and origin_host != host:
+                    return JSONResponse(
+                        {"detail": "Cross-origin request blocked."},
+                        status_code=403,
+                    )
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        if settings.production:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 if _STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

@@ -5,6 +5,8 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
+Current version: **0.10.0** (security hardening — see [PROJECT_LOG.md](PROJECT_LOG.md) Session 13).
+
 ---
 
 ## Quick Start (local)
@@ -42,6 +44,8 @@ python -m uvicorn app.main:app --reload
    | `SUPERADMIN_EMAIL` | promoted on every startup |
    | `GITHUB_PAT` | fine-grained PAT — repo: `Email-Validator`, **Actions: Read+Write** |
    | `GITHUB_REPO` | `owner/repo` of this repo |
+   | `BASE_URL` | public origin (e.g. `https://validator.example.com`) — used for outbound reset/invite links; must be set in production |
+   | `PRODUCTION` | `true` to enable HSTS + `secure` session cookies |
 
 3. Set the same `DATABASE_URL` and `BOUNCIFY_API_KEY` as **GitHub Actions secrets** (Settings → Secrets → Actions) so the bulk worker hits the same DB and provider.
 
@@ -64,7 +68,7 @@ Cache hits short-circuit before any provider is called (TTL configurable per req
 
 ## API
 
-Full OpenAPI docs at `/docs`. Auth: session cookie via `/login`.
+Full OpenAPI docs at `/docs`. **All `/api/*` endpoints require a session cookie via `/login`** — anonymous access returns 401/redirect.
 
 ```
 POST   /api/verify                 single email
@@ -98,7 +102,10 @@ bash scripts/pre_push_check.sh     # pre-push gate
 
 ## Notes
 
-- All routes auth-gated. Sessions: SHA-256-hashed tokens in DB, HttpOnly cookie. New registrations start inactive — admin must approve.
+- All routes auth-gated. Sessions: SHA-256-hashed tokens in DB, HttpOnly cookie. New registrations start inactive — admin must approve. Password change/reset revokes every existing session.
+- Bulk + single-verify endpoints are ownership-scoped — a user only sees their own jobs; admin/superadmin sees all. `Job.user_id` is stamped on creation.
+- Per-IP rate limits on `/login`, `/forgot-password`, `/register`. Failed-login lockout still applies per-account.
+- Origin-check + security-headers middleware (HSTS in prod) provide CSRF / clickjacking / sniffing defence on top of `samesite="lax"`.
 - Timestamps render in **IST** (UTC+5:30) — DB stays naive-UTC, conversion is display-only via `app/templating.py`.
 - Bulk jobs show a live **ETA** while running, plus a global HTMX progress bar for every in-flight request. Job list auto-refreshes while anything is queued or running.
 - Free-tier safe: `keep_warm.yml` pings `/api/health` every 5 min so Neon doesn't auto-pause; lifespan + dashboard aggregates are bounded so cold starts can't 504.

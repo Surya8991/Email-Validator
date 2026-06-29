@@ -19,16 +19,20 @@ def _db_url() -> str:
     return "sqlite:///./email_validator.db"
 
 
-def _connect_args() -> dict:
+def _engine_kwargs() -> dict:
     url = _db_url()
     if url.startswith("sqlite"):
-        return {"check_same_thread": False}
-    # Neon + most managed Postgres require SSL
-    return {"sslmode": "require"}
+        return {"connect_args": {"check_same_thread": False}}
+    # Neon idle-pauses connections; pre-ping + short recycle avoids stale-conn 500s.
+    return {
+        "connect_args": {"sslmode": "require", "connect_timeout": 5},
+        "pool_pre_ping": True,
+        "pool_recycle": 300,
+    }
 
 
 DATABASE_URL = _db_url()
-engine = create_engine(DATABASE_URL, connect_args=_connect_args())
+engine = create_engine(DATABASE_URL, **_engine_kwargs())
 
 
 def create_db_tables() -> None:
@@ -63,6 +67,7 @@ def backfill_team_owners() -> None:
     Idempotent — only inserts when no owner exists for a team. Run on startup.
     """
     from sqlmodel import Session, select
+
     from app.models import Team, TeamMembership, User
     with Session(engine) as db:
         teams = db.exec(select(Team)).all()
