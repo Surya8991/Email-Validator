@@ -88,6 +88,7 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 - `DATABASE_URL` — Neon connection string (`postgres://...` or `postgresql+psycopg2://...`)
 - `GITHUB_PAT` — fine-grained PAT, Actions: read/write (for bulk CSV processing). Without this, jobs sit at `queued` forever on Vercel.
 - `GITHUB_REPO` — `owner/repo` of the worker repo (blank by default — `.env.example` no longer hardcodes the upstream repo so forks don't dispatch to it).
+- `JOB_CALLBACK_TOKEN` — shared secret that the `bulk_process` workflow uses to call `/api/bulk/{id}/workflow-callback` when a run finishes. Must match the GitHub repo secret of the same name. Without this set, the callback endpoint returns 503 and jobs cancelled in the GitHub UI stay `running` forever in the app. Generate: `python -c "import secrets; print(secrets.token_hex(16))"`.
 - `SECRET_KEY` — random string for session signing (generate: `openssl rand -hex 32`)
 - `BASE_URL` — canonical public origin (e.g. `https://validator.example.com`). Used for all outbound links (password reset, invites, approvals). **Must be set in production** — never trust the request `Host` header behind a proxy. Falls back to `request.base_url` for local dev only.
 
@@ -157,6 +158,11 @@ All normalize to: `valid | invalid | risky | unknown`
 - `POST /api/cache/clear` — admin-only. Wipes the entire cache.
 
 UI buttons live on `/jobs` (per-row + "Clear all history" header), `/jobs/{id}` (Delete job), and `/cache` ("Clear all" next to "Purge Expired").
+
+## Retry + workflow callback
+- `POST /api/bulk/{id}/retry` — owner-or-admin. Only valid when `status='failed'`. Deletes existing `EmailResult` rows for the job (the worker iterates the whole CSV every run, so leftovers would duplicate), resets `status/processed/error`, re-dispatches the workflow with `triggered_by=current_user.email`. Returns 410 if `csv_data` has been pruned. Retry buttons live on `/jobs` rows and `/jobs/{id}` for failed jobs.
+- `POST /api/bulk/{id}/workflow-callback` — called by the workflow's final `if: always()` step. Auth via `X-Callback-Token` header matched against `JOB_CALLBACK_TOKEN`. Body: `{conclusion, run_url, reason?}`. Flips the job to `failed` (with run URL embedded in `job.error`, rendered as a link by the `linkify` filter) when the run was cancelled in the GitHub UI, killed by the runner, or timed out — cases where `_mark_failed` inside the script never ran. Refuses to clobber jobs already `done` or `failed`.
+- `bulk_process.yml` inputs: `job_id`, `cache_ttl_days`, `triggered_by`. `run-name` is `"Bulk #<id> — <email>"`. Repo variable `APP_URL` gates the notify step (no-op if unset).
 
 ## Bulk Upload Flow
 1. User uploads **CSV** / **XLSX** / pasted emails → `POST /api/bulk`. XLSX is converted to CSV server-side via openpyxl; paste mode is converted client-side to a `pasted.csv` blob.

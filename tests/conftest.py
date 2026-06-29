@@ -53,6 +53,12 @@ def auth_client(patch_db):
 
     from app.main import app
     from app.models import User
+    from app.security import rate_limit as rl
+
+    # Reset the per-IP login bucket between tests — every auth_client fixture
+    # call hits POST /login, and 10 fixture uses in 60s otherwise trip the
+    # login rate limiter with HTTP 429.
+    rl._buckets.clear()
 
     pw_hash = bcrypt.hashpw(b"testpass123", bcrypt.gensalt(rounds=4)).decode()
     with Session(patch_db) as db:
