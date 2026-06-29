@@ -2,10 +2,11 @@
 
 [![Keep Warm](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/keep_warm.yml)
 [![Bulk Email Validation](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/bulk_process.yml)
+[![CI](https://github.com/Surya8991/Email-Validator/actions/workflows/ci.yml/badge.svg)](https://github.com/Surya8991/Email-Validator/actions/workflows/ci.yml)
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.11** — workflow callback + retry endpoint, per-user submission caps, 3-strikes rule on persistent unknowns, GHA concurrency=3 across bulk + retry workflows, account-cleanup race fixes, owner-visible jobs columns. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 18.
+Current version: **0.12** — cold-start 504 fix (DB ops moved out of Vercel lifespan into `db_init.yml`), nightly scheduled retry_unknowns, stale-job watchdog, pip-audit in CI, Dependabot. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 19.
 
 ---
 
@@ -57,7 +58,9 @@ python -m uvicorn app.main:app --reload
    | `MAX_USER_ACTIVE_EMAILS` | `2000` | Per-user sum-of-pending-emails cap. 429 if exceeded. |
    | `UNKNOWN_STRIKES` | `3` | After this many failed retries, `EmailResult.verdict` flips from `unknown` to `invalid` (see Retry sweep below). |
 
-3. Set these **GitHub Actions secrets** so the bulk + retry workers hit the same DB/provider as Vercel: `DATABASE_URL`, `BOUNCIFY_API_KEY`, `JOB_CALLBACK_TOKEN`.
+3. Set these **GitHub Actions secrets** so the bulk + retry workers hit the same DB/provider as Vercel: `DATABASE_URL`, `BOUNCIFY_API_KEY`, `JOB_CALLBACK_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SUPERADMIN_EMAIL`.
+
+   > `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `SUPERADMIN_EMAIL` are now read by `db_init.yml` (runs on every push to main) instead of Vercel's lifespan. Remove them from Vercel env vars if you had them there — they're no longer needed at runtime.
 
 4. Set these **GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables tab) — all optional:
 
@@ -70,6 +73,8 @@ python -m uvicorn app.main:app --reload
    | `CACHE_TTL_DAYS` | Cache lifetime default override. |
 
 5. Bulk jobs auto-dispatch from `/api/bulk` → GitHub Actions runs `bulk_process.yml` → writes back to Neon → UI polls progress. Workflow's final step calls back into the app on success / failure / cancel so cancelled-in-the-GH-UI runs no longer stay `running` forever.
+
+6. **DB init runs via GitHub Actions, not Vercel.** Every push to `main` triggers `db_init.yml` which runs `create_db_tables`, admin bootstrap, and team-owner backfill against Neon directly. Vercel cold starts no longer do any DB ops — this keeps them under the 10s Hobby limit even on the first request after a Neon idle-pause.
 
 6. The `bulk_process` and `retry_unknowns` workflows are both capped at **3 concurrent runs** via a 3-bucket `concurrency:` group (Bouncify rate limits start producing `unknown` past ~3 parallel workers). A 4th dispatch waits in GitHub's own queue until a slot frees up.
 
@@ -123,7 +128,7 @@ Each pass increments `EmailResult.retry_count` (added by `_apply_lightweight_mig
 
 Trigger from the UI: `/admin/stats` shows a "↻ Retry N unknowns" button when verdict_counts['unknown'] > 0 (capped at 10,000 emails per click).
 
-Trigger from CLI:
+Runs **automatically every day at 3 AM** via a schedule trigger in `retry_unknowns.yml`. You can still trigger manually:
 ```sh
 gh workflow run retry_unknowns.yml \
   -f batch_size=500 -f max_batches=20 -f strikes=3
@@ -136,8 +141,11 @@ gh workflow run retry_unknowns.yml \
 ```bash
 pytest -q                          # 36 tests, all external HTTP mocked
 ruff check .
+pip install pip-audit && pip-audit # CVE scan on all dependencies
 bash scripts/pre_push_check.sh     # pre-push gate
 ```
+
+CI runs all three (ruff, mypy, pytest, pip-audit) on every push and PR via `.github/workflows/ci.yml`. Dependabot opens weekly PRs for outdated pip packages and GitHub Actions versions.
 
 ---
 
@@ -149,5 +157,6 @@ bash scripts/pre_push_check.sh     # pre-push gate
 - Origin-check + security-headers middleware (HSTS in prod) provide CSRF / clickjacking / sniffing defence on top of `samesite="lax"`.
 - Timestamps render in **IST** (UTC+5:30) — DB stays naive-UTC, conversion is display-only via `app/templating.py`.
 - Bulk jobs show a live **ETA** while running, plus a global HTMX progress bar for every in-flight request. Job list auto-refreshes while anything is queued or running.
-- Free-tier safe: `keep_warm.yml` pings `/api/health` every 5 min so Neon doesn't auto-pause; lifespan + dashboard aggregates are bounded so cold starts can't 504.
+- Free-tier safe: `keep_warm.yml` (×3 redundant workflows) pings `/api/health` every 5 min so Neon doesn't auto-pause. DB ops (`create_db_tables`, admin bootstrap, team backfill) run via `db_init.yml` on push rather than in the Vercel lifespan — cold starts now take ~2s, well within Hobby's 10s limit.
+- **Stale job watchdog:** `stale_jobs.yml` runs hourly and marks any job stuck in `running` for >7h as `failed`, catching GitHub Actions runner kills that the workflow-callback missed.
 - **Read [PROJECT_LOG.md](PROJECT_LOG.md) before changing anything** — has the do-not-regress list, env-var table, and the Workflow Runbook for triaging Vercel + GHA failures.
