@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 14). Current VERSION: **0.10.1**
+> Last updated: 2026-06-29 (Session 15). Current VERSION: **0.10.1**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -48,6 +48,33 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+
+---
+
+## Session 15 — 2026-06-29 — keep-warm redundancy
+
+Added `keep_warm_b.yml` and `keep_warm_c.yml` as redundancy partners to
+`keep_warm.yml`. All three share `concurrency: keep-warm` with
+`cancel-in-progress: true`, so near-simultaneous fires collapse to one
+ping — but the three separate workflow registrations get scheduled by
+GHA's deprioritizer independently, so the chance that AT LEAST ONE
+fires in any given 5-min window goes up roughly 3×.
+
+Cron offsets within each 5-min grid:
+- A (`keep_warm.yml`):   2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57
+- B (`keep_warm_b.yml`): 1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56
+- C (`keep_warm_c.yml`): 4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59
+
+**Real-world math:** on a private free repo, 5-min cadence × 24h × 30d
+≈ 2,880 min/month, already over the 2,000-min budget. Current
+~30-40 min/month bill exists *because* GHA is already throttling us.
+Redundancy raises fire-probability per window but stays inside budget
+since deprioritization scales with usage. **For a real SLA on warmth,
+use UptimeRobot** (free, 5-min HTTP monitor, runs on their infra) and
+treat all three keep_warm workflows as a free secondary layer.
+
+Do NOT delete keep_warm_b.yml / keep_warm_c.yml thinking they're
+duplicates — the redundancy is the point.
 
 ---
 

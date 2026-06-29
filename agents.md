@@ -17,7 +17,7 @@ Current version: **0.10.1** (bulk throughput — Bouncify bulk API wired up. See
 - **Config:** pydantic-settings + .env
 - **Serverless:** Vercel native Python runtime (auto-detects ASGI — no Mangum)
 - **Bulk processing:** GitHub Actions workflow (`bulk_process.yml`) — no timeout limit. Triggered INLINE from `/api/bulk` (Vercel kills BackgroundTasks the moment the response returns).
-- **Keep-warm:** GitHub Actions cron (`keep_warm.yml`) every **5 min** hitting `/api/health` → keeps Neon (5-min auto-pause) and the Vercel function warm. **Do NOT tighten below 5 min** — GitHub coalesces/deprioritizes denser schedules (we saw zero scheduled runs in an hour with `*/3`). Offset by 2 from the hour grid.
+- **Keep-warm:** GitHub Actions cron — three redundant workflows (`keep_warm.yml` + `keep_warm_b.yml` + `keep_warm_c.yml`) all targeting the same 5-min grid at offsets `{2, 1, 4}` minutes. All three share `concurrency: keep-warm` with `cancel-in-progress: true` so near-simultaneous fires collapse to ONE ping. Multiplies fire-probability per window without multiplying ping traffic. **Do NOT tighten below 5 min** — GitHub coalesces/deprioritizes denser schedules. **Do NOT delete the redundant files** thinking they're duplicates. For a true SLA on warmth, configure UptimeRobot (free, 5-min HTTP monitor) — GHA's scheduler is best-effort on free tier and 5-min-cadence × 24h × 30d would technically exceed the 2,000-min private-repo quota if it actually fired every time.
 - **Tests:** pytest + pytest-asyncio + respx
 - **Lint/types:** ruff (ruff.toml) + mypy (mypy.ini)
 

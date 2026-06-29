@@ -1,0 +1,46 @@
+name: Keep Warm B
+
+# Redundancy partner to keep_warm.yml. GitHub Actions deprioritizes
+# individual workflow registrations independently — having two (or
+# three) keep_warm files multiplies the chance that AT LEAST ONE fires
+# in any given 5-min window without multiplying actual ping traffic
+# (the shared `concurrency` group collapses near-simultaneous fires).
+#
+# See keep_warm.yml for the full rationale + APP_URL setup.
+
+on:
+  schedule:
+    - cron: "1,6,11,16,21,26,31,36,41,46,51,56 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping /api/health
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "::error::APP_URL repo variable is not set."
+            exit 1
+          fi
+          echo "Pinging $APP_URL/api/health"
+          for i in 1 2 3; do
+            response=$(curl -sS -o /tmp/body.json -w "%{http_code}" --max-time 15 "$APP_URL/api/health" || echo "000")
+            echo "Attempt $i: HTTP $response"
+            if [ "$response" = "200" ]; then
+              cat /tmp/body.json
+              echo
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::Health check failed after 3 attempts (last status: $response)"
+          cat /tmp/body.json || true
+          exit 1
