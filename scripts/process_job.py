@@ -27,6 +27,7 @@ import io
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # Project root must be on sys.path so `app` package is importable
@@ -66,6 +67,7 @@ def _env_int(name: str, default: int) -> int:
 # calls, which is hot for the lower Bouncify tiers).
 CHUNK_SIZE = _env_int("CHUNK_SIZE", 20)            # per-email path: in-flight per gather
 BULK_SUB_BATCH = _env_int("BULK_SUB_BATCH", 500)   # bulk path: emails per Bouncify bulk submission
+PROGRESS_EVERY = _env_int("PROGRESS_EVERY", 50)    # emails between progress log lines
 _BULK_PROVIDERS = {"bouncify"}  # providers that have a working verify_bulk()
 
 # Bulk path rewritten in v0.10.3 to match Bouncify's actual 5-step bulk API
@@ -327,10 +329,30 @@ async def run(job_id: int) -> None:
         use_bulk = _can_use_bulk(strategy, providers)
         mode = "BULK" if use_bulk else "single"
         print(
-            f"Job {job_id} | {len(emails)} emails | strategy={strategy} | mode={mode}",
+            f"Job {job_id} | {len(emails)} emails | strategy={strategy} | mode={mode} "
+            f"| CHUNK_SIZE={CHUNK_SIZE} BULK_SUB_BATCH={BULK_SUB_BATCH}",
             flush=True,
         )
         print(f"  providers={providers}", flush=True)
+
+        # Mirror retry_unknowns' progress shape so a long bulk run is
+        # observable in real time — `done/total | valid=A invalid=B
+        # risky=C unknown=D | rate emails/s` every PROGRESS_EVERY emails.
+        running = {"valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
+        started = time.monotonic()
+        next_progress_at = PROGRESS_EVERY
+
+        def _log_progress(done: int, total: int, tag: str = "") -> None:
+            elapsed = time.monotonic() - started
+            rate = done / elapsed if elapsed > 0 else 0
+            pct = int(done / total * 100) if total else 0
+            print(
+                f"  {done}/{total} ({pct}%){tag} | "
+                f"valid={running['valid']} invalid={running['invalid']} "
+                f"risky={running['risky']} unknown={running['unknown']} "
+                f"| {rate:.1f} emails/s",
+                flush=True,
+            )
 
         if use_bulk:
             step = BULK_SUB_BATCH
@@ -341,8 +363,14 @@ async def run(job_id: int) -> None:
                 )
                 done = min(i + step, len(emails))
                 _write_results(job_id, chunk, chunk_results, done)
-                pct = int(done / len(emails) * 100)
-                print(f"  {done}/{len(emails)} ({pct}%) [bulk]", flush=True)
+                for verdict, _, _ in chunk_results:
+                    if verdict in running:
+                        running[verdict] += 1
+                # Bulk path's sub-batch IS already 500 emails — log every
+                # batch so the user sees something at least once per
+                # Bouncify-bulk round-trip even if PROGRESS_EVERY > 500.
+                _log_progress(done, len(emails), " [bulk]")
+                next_progress_at = done + PROGRESS_EVERY
         else:
             step = CHUNK_SIZE
             for i in range(0, len(emails), step):
@@ -351,8 +379,12 @@ async def run(job_id: int) -> None:
                 chunk_results = await asyncio.gather(*tasks)
                 done = min(i + step, len(emails))
                 _write_results(job_id, chunk, chunk_results, done)
-                pct = int(done / len(emails) * 100)
-                print(f"  {done}/{len(emails)} ({pct}%)", flush=True)
+                for verdict, _, _ in chunk_results:
+                    if verdict in running:
+                        running[verdict] += 1
+                if done >= next_progress_at or done == len(emails):
+                    _log_progress(done, len(emails))
+                    next_progress_at = done + PROGRESS_EVERY
 
         with Session(engine) as session:
             job = session.get(Job, job_id)

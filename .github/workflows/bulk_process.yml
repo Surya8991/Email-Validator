@@ -70,6 +70,9 @@ jobs:
           # free / starter tiers.
           CHUNK_SIZE: ${{ vars.CHUNK_SIZE }}
           BULK_SUB_BATCH: ${{ vars.BULK_SUB_BATCH }}
+          # Emails between progress lines (default 50). Raise to 200+ to
+          # quiet the log on large jobs; lower to 10 to follow closely.
+          PROGRESS_EVERY: ${{ vars.PROGRESS_EVERY }}
           # Set repo var BOUNCIFY_BULK=1 to enable the bulk-API path for
           # bouncify_only / local_first jobs (10× faster, handles its own
           # rate limiting). Default off — flip on after running one ~1k

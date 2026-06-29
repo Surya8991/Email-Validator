@@ -94,3 +94,4 @@ jobs:
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           CACHE_TTL_DAYS: ${{ vars.CACHE_TTL_DAYS }}
           CHUNK_SIZE: ${{ vars.CHUNK_SIZE }}
+          PROGRESS_EVERY: ${{ vars.PROGRESS_EVERY }}
