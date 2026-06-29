@@ -73,10 +73,12 @@ def linkify(value: str | None) -> Markup:
     if not value:
         return Markup("")
     escaped = str(escape(value))
-    return Markup(_URL_RE.sub(
-        lambda m: f'<a href="{m.group(0)}" target="_blank" rel="noopener" class="underline">{m.group(0)}</a>',
-        escaped,
-    ))
+
+    def _link(m: "re.Match[str]") -> str:
+        u = m.group(0)
+        return f'<a href="{u}" target="_blank" rel="noopener" class="underline">{u}</a>'
+
+    return Markup(_URL_RE.sub(_link, escaped))
 
 
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
