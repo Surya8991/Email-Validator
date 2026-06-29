@@ -1,0 +1,41 @@
+name: Delete Job
+
+# Manual one-off helper to delete a Job + its EmailResult rows directly
+# in the production DB. Runs scripts/delete_job.py against
+# secrets.DATABASE_URL — same connection bulk_process.yml uses, so no
+# new secret needed.
+#
+# Trigger:
+#   gh workflow run delete_job.yml -f job_id=10
+#
+# Refuses to delete a job whose status is 'running' (would crash the
+# worker mid-write).
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID to delete"
+        required: true
+        type: string
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Delete job
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/delete_job.py --job-id "$JOB_ID" --yes

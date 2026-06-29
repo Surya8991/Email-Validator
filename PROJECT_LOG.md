@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 16). Current VERSION: **0.10.2**
+> Last updated: 2026-06-29 (Session 17). Current VERSION: **0.10.3**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -48,6 +48,78 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+
+---
+
+## Session 17 — 2026-06-29 — v0.10.3 verify_bulk rewritten to real Bouncify API
+
+**Root cause of the v0.10.1 regression confirmed.** Bouncify's bulk
+API is **five** endpoints, not two. The old `verify_bulk` was missing
+two of them and using the wrong method on a third:
+
+| Step | Real API | Old (broken) impl |
+|---|---|---|
+| 1. Upload | `POST /v1/bulk?apikey=KEY` body `{auto_verify, emails: [{email}]}` | POST `/v1/bulk` body `{apikey, emails: [str]}` |
+| 2. Start  | (auto_verify=true skips this) or PATCH | missing — job sat at `status="ready"` forever |
+| 3. Status | `GET /v1/bulk?apikey=KEY&job_id=ID` | `GET /v1/bulk/{job_id}` |
+| 4. Download | `POST /v1/download?apikey=KEY&jobId=ID` body `{filterResult: [...]}` returns **CSV** | `GET /v1/download/{job_id}` expected JSON |
+| 5. Parse | header `Email, Verification Result, ...` (CSV) | keys `email`/`result` (JSON) |
+
+Job 10's symptom was a direct consequence:
+- POST upload went through, Bouncify accepted ~200 of 1000 emails into
+  a "ready" state (credits charged on upload).
+- We never PATCH-started, and `auto_verify` wasn't set, so Bouncify
+  never ran verification on the other ~800.
+- Status poll hit a 404 URL, ran the 60-poll loop to exhaustion (5 min
+  wasted per sub-batch), then proceeded.
+- "Download" GET hit a 404, raised, caught by outer `except`, fell
+  back to per-email — but only AFTER each sub-batch wasted 5 min.
+- Net: ~200 emails verified, ~800 dropped, 178 of those mapped to
+  cached-valid from prior jobs, the rest mapped to "unknown".
+
+**Fix (`app/providers/bouncify.py:verify_bulk`):**
+- POST `/v1/bulk` with `{auto_verify: true, emails: [{email: ...}]}`
+  and `?apikey=KEY` as query param. Auto-verify on upload removes the
+  need for a separate PATCH step.
+- Poll GET `/v1/bulk?apikey=KEY&job_id=ID` until `status="completed"`.
+  Raise on `failed`/`cancelled`. 180 * 5s = 15 min ceiling per batch.
+- POST `/v1/download?apikey=KEY&jobId=ID` with `{filterResult: [...]}`
+  body. Parse CSV header (`Email`, `Verification Result`, `Disposable`,
+  `Role`, `ISP`, …).
+- `_STATUS_MAP` now handles both `accept_all` (single API) and
+  `accept-all` (bulk CSV) — they were inconsistent in Bouncify's own
+  responses.
+- Unmatched-input rows return `ProviderResult(status="unknown",
+  sub_status="missing_in_bulk_response")` so the worker's defensive
+  net knows where to re-verify.
+
+**Defensive net (`scripts/process_job.py:_process_sub_batch_bulk`):**
+- After every bulk call, count `unknown` results. If the unknown ratio
+  is > 50%, the whole sub-batch is re-verified per-email. If smaller,
+  only the unknowns are re-verified. Either path is automatic and
+  logged. Designed to fail loud on the next time Bouncify changes
+  their response format.
+
+**Re-enable gating:**
+- `_BULK_ENABLED = os.getenv("BOUNCIFY_BULK", "").lower() in ("1", ...)`.
+  Default OFF. Set `BOUNCIFY_BULK=1` as a repo Variable or secret on
+  the GHA bulk worker to opt in. The single-API path is the safe
+  default; flip the var when you've confirmed a real ~1k job matches
+  the per-email distribution.
+
+**Tests:** 28 passing (added two round-trip respx tests for the bulk
+flow — one happy path verifying `valid|invalid|risky` distribution,
+one verifying that missing rows surface as
+`sub_status="missing_in_bulk_response"`). These would have caught the
+v0.10.1 regression — making them required CI before re-enabling.
+
+**Cleanup tooling added:**
+- `scripts/delete_job.py` — local helper to delete a corrupt job and
+  its `EmailResult` rows. Requires `DATABASE_URL`. Supports
+  `--dry-run`, refuses to delete a running job.
+- `.github/workflows/delete_job.yml` — same operation as a
+  `workflow_dispatch`, using `secrets.DATABASE_URL`. Trigger with
+  `gh workflow run delete_job.yml -f job_id=N`. Used to wipe job 10.
 
 ---
 

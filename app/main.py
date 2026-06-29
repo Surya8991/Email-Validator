@@ -124,7 +124,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Email Validator",
-    version="0.10.2",
+    version="0.10.3",
     lifespan=lifespan,
     docs_url=None,  # custom /docs with back button below
 )

@@ -25,6 +25,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -52,19 +53,26 @@ CHUNK_SIZE = 20            # per-email path: in-flight concurrency per gather
 BULK_SUB_BATCH = 500       # bulk path: emails per Bouncify bulk submission
 _BULK_PROVIDERS = {"bouncify"}  # providers that have a working verify_bulk()
 
-# DISABLED in v0.10.2. Job 10 showed the bulk path returned ~18% valid vs the
-# per-email path's ~80% on the same input. Root cause is in
-# `BouncifyProvider.verify_bulk` — likely a submission-format or response-key
-# mismatch with Bouncify's actual bulk API: only ~200 of 1000 emails got
-# real verdicts (credits used), the rest fell through to "unknown". Until
-# we verify against Bouncify's documented format (and add a round-trip
-# test), every job runs through the per-email path — slow but correct.
-# DO NOT flip this back to True without fixing verify_bulk first.
-_BULK_ENABLED = False
+# Bulk path rewritten in v0.10.3 to match Bouncify's actual 5-step bulk API
+# (upload+auto_verify, poll status, POST /download → CSV). The previous
+# implementation submitted to wrong endpoints with the wrong body and
+# produced ~82% unknown on job 10. The new implementation has a respx
+# round-trip test and a >50%-unknown defensive re-verify in the worker.
+#
+# Still default-off until you've run at least one ~1k job with
+# BOUNCIFY_BULK=1 set and confirmed verdicts match the per-email path
+# on the same input. Set the env var in the GitHub Actions workflow
+# secrets, or as a repo variable, then re-run.
+_BULK_ENABLED = os.getenv("BOUNCIFY_BULK", "").strip().lower() in ("1", "true", "yes", "on")
+# Re-verify a sub-batch per-email when more than this fraction of the
+# bulk response came back "unknown" — a sanity net that catches any
+# parser drift or Bouncify response-format changes before they ship
+# corrupt verdicts.
+_BULK_UNKNOWN_REVERIFY_PCT = 0.5
 
 
 def _can_use_bulk(strategy: str, providers: list[str]) -> bool:
-    """Gate the bulk path. Disabled in 0.10.2 — see _BULK_ENABLED note."""
+    """Gate the bulk path. Default off; flip BOUNCIFY_BULK=1 in env to enable."""
     if not _BULK_ENABLED:
         return False
     if strategy not in ("bouncify_only", "local_first"):
@@ -176,6 +184,32 @@ async def _process_sub_batch_bulk(
                     *[bouncify.verify(em) for em in pending_emails],
                     return_exceptions=False,
                 ))
+
+            # Defensive net: if a large fraction of the bulk response is
+            # "unknown", treat the call as failed (parser drift, Bouncify
+            # response-format change, transient error) and re-verify the
+            # whole sub-batch per-email. Catches the v0.10.1 regression class.
+            unknown_count = sum(1 for r in bulk_results if r.status == "unknown")
+            if unknown_count / max(1, len(bulk_results)) > _BULK_UNKNOWN_REVERIFY_PCT:
+                print(
+                    f"[WARN] bouncify bulk returned {unknown_count}/{len(bulk_results)} unknown "
+                    f"(> {_BULK_UNKNOWN_REVERIFY_PCT:.0%}) — full per-email re-verify",
+                    flush=True,
+                )
+                bulk_results = list(await asyncio.gather(
+                    *[bouncify.verify(em) for em in pending_emails],
+                    return_exceptions=False,
+                ))
+            elif unknown_count > 0:
+                # Smaller miss rate — re-verify only the unknowns. Fixes the
+                # long tail without paying for the whole batch again.
+                unknown_idx = [i for i, r in enumerate(bulk_results) if r.status == "unknown"]
+                retry = await asyncio.gather(
+                    *[bouncify.verify(pending_emails[i]) for i in unknown_idx],
+                    return_exceptions=False,
+                )
+                for j, rr in zip(unknown_idx, retry):
+                    bulk_results[j] = rr
 
             for abs_i, email, br in zip(pending_idx, pending_emails, bulk_results):
                 results[abs_i] = (br.status, {"bouncify": br}, False)
