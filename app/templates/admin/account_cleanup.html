@@ -54,7 +54,7 @@
       in the cache. Keep <strong>valid</strong>, <strong>risky / catch-all</strong>, and any
       email not in the cache.
     </p>
-    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+    <div id="breakdown-grid" class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm hidden">
       <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
         <div class="text-xs uppercase tracking-wide text-green-600">Valid (keep)</div>
         <div id="bd-valid" class="text-xl font-semibold">0</div>
@@ -84,8 +84,8 @@
       <p id="progress-label" class="text-xs text-gray-500 dark:text-gray-400 mt-1.5"></p>
     </div>
 
-    <button id="btn-filter"
-      class="mt-5 inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+    <button id="btn-filter" disabled
+      class="mt-5 inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
       🧹 Filter rows
     </button>
   </div>
@@ -98,7 +98,7 @@
       <div><dt class="text-xs uppercase tracking-wide text-gray-500">Dropped</dt><dd id="out-dropped" class="text-lg font-semibold"></dd></div>
       <div><dt class="text-xs uppercase tracking-wide text-gray-500">Total processed</dt><dd id="out-total" class="text-lg font-semibold"></dd></div>
     </dl>
-    <div class="flex flex-wrap gap-3">
+    <div class="flex flex-wrap gap-3 sticky bottom-0 bg-white dark:bg-gray-900 py-3 -mx-6 px-6 border-t border-gray-100 dark:border-gray-800">
       <button id="btn-dl-verified"
         class="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
         ⬇ Verified only <span id="verified-count" class="text-xs opacity-80"></span>
@@ -133,7 +133,11 @@
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script
+  src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"
+  integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
 <script>
 (function () {
   const state = {
@@ -164,8 +168,10 @@
     state.verifiedOnly = [];
     state.pendingEmails = [];
     hide("step-breakdown");
+    hide("breakdown-grid");
     hide("step-exports");
     hide("progress-block");
+    $("btn-filter").disabled = true;
     $("progress-bar").style.width = "0%";
     $("progress-label").textContent = "";
     ["bd-valid","bd-risky","bd-invalid","bd-unknown","bd-notincache"]
@@ -195,6 +201,11 @@
   });
 
   function handleFile(file) {
+    const MAX_SAFE_BYTES = 250 * 1024 * 1024;
+    if (file.size > MAX_SAFE_BYTES) {
+      const mb = Math.round(file.size / 1024 / 1024);
+      if (!confirm(`This file is ${mb} MB. Browsers may crash above ~250 MB. Continue anyway?`)) return;
+    }
     state.filename = file.name;
     $("sum-filename").textContent = file.name;
     resetPostUpload();
@@ -316,8 +327,11 @@
     state.verdicts = nextVerdicts;
     state.lookupInFlight = false;
     updateBreakdown(uniqueEmails);
+    show("breakdown-grid");
+    hide("progress-block");
     $("btn-lookup").disabled = false;
     $("btn-filter").disabled = false;
+    $("email-col").disabled = false;
   });
 
   function updateBreakdown(uniqueEmails) {
@@ -341,20 +355,38 @@
 
   // ---- Step 3: filter -------------------------------------------------------
   $("btn-filter").addEventListener("click", () => {
+    const btn = $("btn-filter");
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Filtering…";
+    // Yield to the browser so the button repaints before the heavy loop blocks.
+    setTimeout(() => {
+      try {
+        runFilter();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    }, 0);
+  });
+
+  function runFilter() {
     const col = state.emailCol;
     state.kept = [];
     state.dropped = [];
     state.verifiedOnly = [];
-    for (const row of state.rows) {
+    // Cache the per-row verdict so the annotated export doesn't re-normalize.
+    state.rowVerdicts = new Array(state.rows.length);
+    for (let i = 0; i < state.rows.length; i++) {
+      const row = state.rows[i];
       const em = (row[col] || "").trim().toLowerCase();
       const v = em ? state.verdicts.get(em) : null;
+      state.rowVerdicts[i] = v || null;
       if (v && DROP_VERDICTS.has(v.verdict)) {
         state.dropped.push({ row, reason: v.verdict });
       } else {
         state.kept.push(row);
       }
-      // Strict "verified only" — must have a cache entry with verdict='valid'.
-      // Drops risky/catch-all AND not-in-cache rows.
       if (v && v.verdict === "valid") {
         state.verifiedOnly.push(row);
       }
@@ -366,11 +398,10 @@
     if (vc) vc.textContent = `(${state.verifiedOnly.length.toLocaleString()})`;
     show("step-exports");
     document.getElementById("step-exports").scrollIntoView({ behavior: "smooth" });
-  });
+  }
 
   // ---- Step 4: downloads ----------------------------------------------------
-  function downloadCSV(filename, headers, rows) {
-    const csv = Papa.unparse({ fields: headers, data: rows });
+  function downloadCSVText(filename, csv) {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -392,21 +423,20 @@
       alert("No verified (cache verdict = 'valid') rows in this file.");
       return;
     }
-    const rows = list.map((r) => state.headers.map((h) => r[h] ?? ""));
-    downloadCSV(`${baseName()}.verified.csv`, state.headers, rows);
+    downloadCSVText(`${baseName()}.verified.csv`,
+      Papa.unparse(list, { columns: state.headers }));
   });
 
   $("btn-dl-kept").addEventListener("click", () => {
-    const rows = state.kept.map((r) => state.headers.map((h) => r[h] ?? ""));
-    downloadCSV(`${baseName()}.cleaned.csv`, state.headers, rows);
+    downloadCSVText(`${baseName()}.cleaned.csv`,
+      Papa.unparse(state.kept, { columns: state.headers }));
   });
 
   $("btn-dl-dropped").addEventListener("click", () => {
     const headers = [...state.headers, "drop_reason"];
-    const rows = state.dropped.map(({ row, reason }) =>
-      [...state.headers.map((h) => row[h] ?? ""), reason]
-    );
-    downloadCSV(`${baseName()}.dropped.csv`, headers, rows);
+    const augmented = state.dropped.map(({ row, reason }) => ({ ...row, drop_reason: reason }));
+    downloadCSVText(`${baseName()}.dropped.csv`,
+      Papa.unparse(augmented, { columns: headers }));
   });
 
   $("btn-dl-pending").addEventListener("click", () => {
@@ -415,23 +445,23 @@
       alert("No 'not in cache' emails to export.");
       return;
     }
-    // Single-column CSV — drop straight into the bulk uploader on the homepage.
-    const rows = list.map((e) => [e]);
-    downloadCSV(`${baseName()}.pending_validation.csv`, ["email"], rows);
+    downloadCSVText(`${baseName()}.pending_validation.csv`,
+      Papa.unparse(list.map((e) => ({ email: e })), { columns: ["email"] }));
   });
 
   $("btn-dl-annot").addEventListener("click", () => {
     const headers = [...state.headers, "cache_verdict", "cache_validated_at"];
-    const rows = state.rows.map((row) => {
-      const em = (row[state.emailCol] || "").trim().toLowerCase();
-      const v = em ? state.verdicts.get(em) : null;
-      return [
-        ...state.headers.map((h) => row[h] ?? ""),
-        v ? v.verdict : "",
-        v && v.validated_at ? v.validated_at : "",
-      ];
+    const verdicts = state.rowVerdicts || [];
+    const augmented = state.rows.map((row, i) => {
+      const v = verdicts[i];
+      return {
+        ...row,
+        cache_verdict: v ? v.verdict : "",
+        cache_validated_at: v && v.validated_at ? v.validated_at : "",
+      };
     });
-    downloadCSV(`${baseName()}.annotated.csv`, headers, rows);
+    downloadCSVText(`${baseName()}.annotated.csv`,
+      Papa.unparse(augmented, { columns: headers }));
   });
 })();
 </script>
