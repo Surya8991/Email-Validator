@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 19). Current VERSION: **0.12**
+> Last updated: 2026-06-29 (Session 20). Current VERSION: **0.13**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -55,6 +55,35 @@
 - Pass bare integer inputs from a `schedule:`-triggered workflow to argparse `type=int` params — when `schedule:` fires, all `inputs.*` are empty strings. `argparse` rejects `--batch-size ""` with a type error. Always use `${{ inputs.foo || 'default' }}` fallbacks on every env var that feeds a numeric CLI flag (see `retry_unknowns.yml`).
 - Bring back SELECT-then-INSERT in `app/core/cache.py:set_cache`. Session 18 switched to `INSERT ... ON CONFLICT (email) DO UPDATE` because two parallel workers (or two tasks in the same asyncio.gather chunk hitting a duplicated CSV email) were racing on the SELECT-then-INSERT and tripping `ix_emailcache_email`, crashing the worker mid-write and losing the already-validated rows of that job. UPSERT is the only correct shape; preserve it on both Postgres (`postgresql.insert`) and SQLite (`sqlite.insert`) branches.
 - Render Job owner email in places that read `_JOB_LIST_COLS` without re-joining `User` — Session 18 added `Job.user_id` + `User.email` to the SELECT in `_list_jobs_lightweight`, `_dashboard_aggregates.recent`, and the `/jobs/{id}` query, but **not** to the 2-second poll partial `/jobs/{id}/status` (intentional — it's a hot path). If you add owner-email to a new surface, join `User` there too.
+
+---
+
+## Session 20 — 2026-06-29 — v0.13 list-page filters, pagination, audit-log bug
+
+**Filters added** on the highest-traffic list pages:
+
+- **`/jobs`** — status select (queued/running/done/failed) + owner-email contains (admin-only). The existing 5s HTMX auto-refresh now builds `refresh_url` from the active filters and uses `hx-select="#jobs-table-card"` so the filter survives the live refresh (previously the refresh would have used the bare `/jobs` URL and the first `.card` element, which now happens to be the filter form itself).
+- **`/cache`** — verdict select (valid/invalid/risky) sits next to the existing email search. Both query params flow into `/api/cache/export` so the CSV download matches what is on screen.
+- **`/admin/audit-log`** — actor-email + from/to date filters added on top of the existing action filter. Inclusive end-of-day on `to_date` via `< to_dt + timedelta(days=1)`. All four filters are honoured by the export route, persisted across pagination links, and flow into the audit-trail entry for the export itself.
+
+**Pagination added** to `/jobs` (was hard-capped at 50 rows, no way to see older history). 50/page, page count derived from a filtered COUNT(*) query, controls show "Showing X–Y of Z" + Prev/Next.
+
+**Bug fix in `/admin/audit-log`**: the total-count query was `select(func.count()).select_from(AuditLog)` with NO filter applied, so as soon as you set any action filter the page count was wrong and the Next link took you to empty pages. New `_apply_audit_filters()` helper applies the same WHERE clauses to both the SELECT and the COUNT — used by the page route AND the CSV export so they always agree.
+
+**Files touched:**
+- `app/routes/ui.py` — `_list_jobs_lightweight()` now returns `(rows, total)` and accepts `status / owner / page`. New `_VALID_JOB_STATUSES`, `_JOBS_PER_PAGE = 50`. `/partials/cache-table` gained `verdict` param + `_VALID_CACHE_VERDICTS`.
+- `app/routes/api_stats.py` — `/api/cache/export` gained `verdict` param + `_VALID_EXPORT_VERDICTS`.
+- `app/routes/admin.py` — `_parse_iso_date()` + `_apply_audit_filters()` helpers; `/audit-log` + `/audit-log/export` both extended.
+- `app/templates/jobs.html` — filter bar, pagination block, refresh URL builder, `#jobs-table-card` id.
+- `app/templates/cache.html` — verdict select + JS that keeps the export link in sync.
+- `app/templates/admin/audit_log.html` — 4-input grid filter form, all-four pagination preservation, export link now appends all four filter params.
+
+**Validated locally:** ruff clean, `from app.main import app` smoke test passes on the dependency floor bumped in Session 19 (fastapi 0.138, pydantic 2.13, httpx 0.28).
+
+**What I intentionally did NOT add this session** (low value vs effort):
+- Pagination on `/admin/sessions`, `/admin/usage`, `/admin/teams`, `/teams` — bounded by # of users / teams, single-screen views.
+- Sort options anywhere — currently always "newest first", which is what every user expects from a history view.
+- Date range filter on `/admin/usage` and `/admin/stats` — would need new SQL aggregates; revisit if anyone asks.
 
 ---
 
@@ -802,6 +831,7 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 
 | Session | Date | Version | Key Work |
 |---|---|---|---|
+| 20 | 2026-06-29 | v0.13 | List-page filters + pagination on `/jobs`, `/cache`, `/admin/audit-log`. Fixed audit-log total-count bug (page math was wrong when any filter was set). |
 | 19 | 2026-06-29 | v0.12 | Cold-start fix: DB ops out of Vercel lifespan → `db_init.yml` (push-triggered). pip-audit in CI, nightly retry_unknowns schedule, hourly stale-job watchdog, Dependabot. |
 | 1 | 2026-06-23 | v0.1.0 | Initial build — FastAPI scaffold, 5 providers, 4 strategies, SQLite+SQLModel, HTMX+Tailwind UI, bulk CSV pipeline, BackgroundTasks worker, Jinja2 templates, 16 tests passing |
 | 2 | 2026-06-24 | v0.2.0 | Email result cache — `EmailCache` table, 30-day TTL, `validate_with_cache()`, cache-aware bulk worker, `⚡ cached` badge, `purge_expired()`, 7 new cache tests → 25 total. PROJECT_LOG created. |
@@ -1208,4 +1238,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-29 — Session 19 — v0.12_
+_Last updated: 2026-06-29 — Session 20 — v0.13_

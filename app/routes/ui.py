@@ -337,30 +337,48 @@ async def settings_page(request: Request, current_user: User = Depends(require_a
 
 
 _VALID_JOB_STATUSES = {"queued", "running", "done", "failed"}
+_JOBS_PER_PAGE = 50
 
 
 def _list_jobs_lightweight(
-    status: str | None = None, owner: str | None = None
-) -> list[dict]:
-    """Same column-projection pattern as the dashboard. Keeps csv_data on Neon."""
+    status: str | None = None,
+    owner: str | None = None,
+    page: int = 1,
+) -> tuple[list[dict], int]:
+    """Same column-projection pattern as the dashboard. Keeps csv_data on Neon.
+
+    Returns (rows, total) — total is the row count BEFORE pagination so the
+    template can render page-of-pages controls accurately.
+    """
+    offset = max(0, (page - 1) * _JOBS_PER_PAGE)
     with Session(engine) as session:
         stmt = (
             select(*_JOB_LIST_COLS, Job.user_id, User.email)
             .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
         )
+        count_stmt = (
+            select(func.count()).select_from(Job)
+            .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
+        )
         if status and status in _VALID_JOB_STATUSES:
             stmt = stmt.where(Job.status == status)
+            count_stmt = count_stmt.where(Job.status == status)
         if owner:
             stmt = stmt.where(User.email.contains(owner))  # type: ignore[attr-defined]
+            count_stmt = count_stmt.where(User.email.contains(owner))  # type: ignore[attr-defined]
         rows = session.execute(
-            stmt.order_by(Job.id.desc()).limit(50)
+            stmt.order_by(Job.id.desc()).offset(offset).limit(_JOBS_PER_PAGE)
         ).all()
-    return [
-        {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
-         "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
-         "user_id": r[8], "user_email": r[9]}
-        for r in rows
-    ]
+        total = session.execute(count_stmt).scalar() or 0
+    return (
+        [
+            {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
+             "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
+             "user_id": r[8], "user_email": r[9]}
+            for r in rows
+        ],
+        int(total),
+    )
 
 
 @router.get("/jobs", response_class=HTMLResponse)
@@ -368,6 +386,7 @@ async def jobs_list(
     request: Request,
     status: str = "",
     owner: str = "",
+    page: int = 1,
     current_user: User = Depends(require_auth),
 ):
     # Wrap with same 6s ceiling as the dashboard. Cold Neon + a SELECT * that
@@ -378,19 +397,25 @@ async def jobs_list(
     is_admin = current_user.role in ("admin", "superadmin")
     owner_q = owner.strip() if is_admin else ""
     status_q = status.strip().lower() if status.strip().lower() in _VALID_JOB_STATUSES else ""
+    page = max(1, page)
     try:
-        jobs = await asyncio.wait_for(
-            asyncio.to_thread(_list_jobs_lightweight, status_q or None, owner_q or None),
+        jobs, total = await asyncio.wait_for(
+            asyncio.to_thread(_list_jobs_lightweight, status_q or None, owner_q or None, page),
             timeout=6.0,
         )
     except (TimeoutError, Exception):  # noqa: BLE001
-        jobs = []
+        jobs, total = [], 0
+    pages = max(1, (total + _JOBS_PER_PAGE - 1) // _JOBS_PER_PAGE)
     return templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs,
         "active_page": "jobs",
         "current_user": current_user,
         "status_filter": status_q,
         "owner_filter": owner_q,
+        "page": page,
+        "pages": pages,
+        "total": total,
+        "limit": _JOBS_PER_PAGE,
     })
 
 
