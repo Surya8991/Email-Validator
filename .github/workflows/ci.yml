@@ -22,6 +22,9 @@ jobs:
           pip install -r requirements.txt
           pip install ruff mypy pytest pytest-asyncio respx
 
+      - name: pip-audit
+        run: pip install pip-audit && pip-audit -r requirements.txt
+
       - name: Ruff
         run: ruff check .
 

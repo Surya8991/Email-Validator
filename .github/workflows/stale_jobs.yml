@@ -1,0 +1,39 @@
+name: Fail Stale Jobs
+
+# Marks Job rows stuck in 'running' for more than 7 hours as failed.
+# bulk_process has a 360-minute runner timeout; if the runner is killed
+# or the workflow-callback step never fires, the row stays 'running'
+# forever. This watchdog runs hourly and cleans those up.
+#
+# Required secret: DATABASE_URL
+
+on:
+  schedule:
+    - cron: "15 * * * *"  # every hour at :15
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Stale threshold in hours (default: 7)"
+        required: false
+        default: "7"
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fail stale jobs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HOURS: ${{ inputs.hours || '7' }}
+        run: python scripts/fail_stale_jobs.py --hours "$HOURS"

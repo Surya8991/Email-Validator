@@ -2,6 +2,8 @@ name: Retry Unknown Verdicts
 run-name: "Retry unknowns — bucket ${{ inputs.bucket || 0 }}/${{ inputs.bucket_of || 1 }} (batch ${{ inputs.batch_size }})${{ inputs.job_id && format(' job#{0}', inputs.job_id) || '' }}"
 
 on:
+  schedule:
+    - cron: "0 3 * * *"  # 3 AM daily — retry all unknowns with defaults
   workflow_dispatch:
     inputs:
       batch_size:
@@ -98,15 +100,15 @@ jobs:
           fi
           python scripts/retry_unknowns.py "${ARGS[@]}"
         env:
-          BATCH_SIZE: ${{ inputs.batch_size }}
-          MAX_BATCHES: ${{ inputs.max_batches }}
-          JOB_ID: ${{ inputs.job_id }}
-          SINCE_DAYS: ${{ inputs.since_days }}
-          STRIKES: ${{ inputs.strikes }}
-          BUCKET: ${{ inputs.bucket }}
-          BUCKET_OF: ${{ inputs.bucket_of }}
-          PROVIDERS: ${{ inputs.providers }}
-          STRATEGY: ${{ inputs.strategy }}
+          BATCH_SIZE: ${{ inputs.batch_size || '500' }}
+          MAX_BATCHES: ${{ inputs.max_batches || '0' }}
+          JOB_ID: ${{ inputs.job_id || '' }}
+          SINCE_DAYS: ${{ inputs.since_days || '0' }}
+          STRIKES: ${{ inputs.strikes || '3' }}
+          BUCKET: ${{ inputs.bucket || '0' }}
+          BUCKET_OF: ${{ inputs.bucket_of || '1' }}
+          PROVIDERS: ${{ inputs.providers || 'bouncify' }}
+          STRATEGY: ${{ inputs.strategy || 'bouncify_only' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BOUNCIFY_API_KEY: ${{ secrets.BOUNCIFY_API_KEY }}
           ZEROBOUNCE_API_KEY: ${{ secrets.ZEROBOUNCE_API_KEY }}
