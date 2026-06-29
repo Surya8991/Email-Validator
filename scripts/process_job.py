@@ -49,8 +49,23 @@ from app.providers import registry  # noqa: E402
 from app.providers.registry import get_all_providers  # noqa: E402
 from app.schemas import ProviderResult  # noqa: E402
 
-CHUNK_SIZE = 20            # per-email path: in-flight concurrency per gather
-BULK_SUB_BATCH = 500       # bulk path: emails per Bouncify bulk submission
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+# Env-tunable so the workflow can dial back concurrency without a code change
+# when Bouncify rate limits start inflating 'unknown' (typical sign of
+# saturation: 3 parallel workers × CHUNK_SIZE=20 = 60 in-flight Bouncify
+# calls, which is hot for the lower Bouncify tiers).
+CHUNK_SIZE = _env_int("CHUNK_SIZE", 20)            # per-email path: in-flight per gather
+BULK_SUB_BATCH = _env_int("BULK_SUB_BATCH", 500)   # bulk path: emails per Bouncify bulk submission
 _BULK_PROVIDERS = {"bouncify"}  # providers that have a working verify_bulk()
 
 # Bulk path rewritten in v0.10.3 to match Bouncify's actual 5-step bulk API

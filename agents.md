@@ -114,6 +114,9 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 - `MAX_USER_ACTIVE_JOBS=4` — max queued+running bulk jobs a single user can have in flight (0 = unlimited). Excess uploads get a 429.
 - `MAX_USER_ACTIVE_EMAILS=2000` — max sum of pending emails across a user's queued+running jobs (0 = unlimited). A new upload that would push the user over the cap gets a 429.
 - The bulk_process workflow caps concurrent runs at 3 via a `concurrency: bulk-${{ job_id % 3 }}` group, so a 4th dispatched job queues at GitHub-Actions level until one of the 3 finishes. Accuracy degrades past ~3 parallel workers (Bouncify rate limits start producing 'unknown').
+- Workflow concurrency knobs (repo variables, all optional — leave unset for script defaults): `CHUNK_SIZE` (per-email in-flight per gather, default 20 — drop to 10 if 3-parallel runs show rising unknowns), `BULK_SUB_BATCH` (bulk-path emails per submission, default 500), `BOUNCIFY_BULK` (set `1` to enable the 10×-faster bulk API path for `bouncify_only` / `local_first` jobs; default off pending a confidence-building 1k-row comparison run).
+- `scripts/retry_unknowns.py` + `.github/workflows/retry_unknowns.yml` re-validate `EmailResult.verdict='unknown'` rows in batches (default 500). Args: `--batch-size`, `--max-batches`, `--job-id`, `--since-days`, `--providers`, `--strategy`. UPDATEs every emailresult row for the email when a real verdict is reached and writes the cache.
+- `POST /admin/retry-unknowns` (admin-only) dispatches the workflow with query params `batch_size`, `max_batches`, `since_days`, `providers`, `strategy`, `job_id`. The admin stats page renders a "↻ Retry N unknowns" button that fires this with `batch_size=500`.
 - `ENABLE_SMTP_PROBE=false` — SMTP RCPT TO probe (port 25 often blocked)
 - `SMTP_PROBE_FROM` — FROM address for SMTP probes
 - `*_DAILY_CAP` — per-provider daily quota cap (0 = unlimited)

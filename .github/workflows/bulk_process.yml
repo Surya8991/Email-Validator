@@ -56,6 +56,17 @@ jobs:
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           # Prefer the per-job value sent by the API; fall back to repo var.
           CACHE_TTL_DAYS: ${{ inputs.cache_ttl_days != '' && inputs.cache_ttl_days || vars.CACHE_TTL_DAYS }}
+          # Concurrency knobs — leave repo vars unset to use the script
+          # defaults (CHUNK_SIZE=20, BULK_SUB_BATCH=500). With 3-parallel
+          # workers running, CHUNK_SIZE=10 is a safer ceiling on Bouncify
+          # free / starter tiers.
+          CHUNK_SIZE: ${{ vars.CHUNK_SIZE }}
+          BULK_SUB_BATCH: ${{ vars.BULK_SUB_BATCH }}
+          # Set repo var BOUNCIFY_BULK=1 to enable the bulk-API path for
+          # bouncify_only / local_first jobs (10× faster, handles its own
+          # rate limiting). Default off — flip on after running one ~1k
+          # job with the var set and confirming verdicts match per-email.
+          BOUNCIFY_BULK: ${{ vars.BOUNCIFY_BULK }}
 
       # Always notify the app so it can mark the job 'failed' when this run
       # was cancelled in the GitHub UI, killed by the runner, or timed out —

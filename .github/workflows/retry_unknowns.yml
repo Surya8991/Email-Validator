@@ -1,0 +1,82 @@
+name: Retry Unknown Verdicts
+run-name: "Retry unknowns — batch ${{ inputs.batch_size }}${{ inputs.job_id && format(' (job #{0})', inputs.job_id) || '' }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Unknowns processed per DB round-trip (default: 500)"
+        required: false
+        type: string
+        default: "500"
+      max_batches:
+        description: "Stop after N batches (0 = run until no unknowns left)"
+        required: false
+        type: string
+        default: "0"
+      job_id:
+        description: "Restrict to this job's unknowns (blank = all jobs)"
+        required: false
+        type: string
+        default: ""
+      since_days:
+        description: "Only retry unknowns from the last N days (0 = all time)"
+        required: false
+        type: string
+        default: "0"
+      providers:
+        description: "Comma-separated provider list (default: bouncify)"
+        required: false
+        type: string
+        default: "bouncify"
+      strategy:
+        description: "Validation strategy (default: bouncify_only)"
+        required: false
+        type: string
+        default: "bouncify_only"
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    # Same 3-bucket concurrency scheme as bulk_process: at most 3 of these
+    # in flight at once. The bucket key is the batch_size to spread runs
+    # across the 3 groups when several retry sweeps are launched quickly.
+    concurrency:
+      group: bulk-retry-${{ fromJSON(inputs.batch_size) % 3 }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Retry unknowns
+        run: |
+          ARGS=(--batch-size "$BATCH_SIZE" --max-batches "$MAX_BATCHES" \
+                --since-days "$SINCE_DAYS" --providers "$PROVIDERS" \
+                --strategy "$STRATEGY")
+          if [ -n "$JOB_ID" ]; then
+            ARGS+=(--job-id "$JOB_ID")
+          fi
+          python scripts/retry_unknowns.py "${ARGS[@]}"
+        env:
+          BATCH_SIZE: ${{ inputs.batch_size }}
+          MAX_BATCHES: ${{ inputs.max_batches }}
+          JOB_ID: ${{ inputs.job_id }}
+          SINCE_DAYS: ${{ inputs.since_days }}
+          PROVIDERS: ${{ inputs.providers }}
+          STRATEGY: ${{ inputs.strategy }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BOUNCIFY_API_KEY: ${{ secrets.BOUNCIFY_API_KEY }}
+          ZEROBOUNCE_API_KEY: ${{ secrets.ZEROBOUNCE_API_KEY }}
+          NEVERBOUNCE_API_KEY: ${{ secrets.NEVERBOUNCE_API_KEY }}
+          HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+          CACHE_TTL_DAYS: ${{ vars.CACHE_TTL_DAYS }}
+          CHUNK_SIZE: ${{ vars.CHUNK_SIZE }}

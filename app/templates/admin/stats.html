@@ -79,6 +79,17 @@
       {% else %}
         <p class="text-sm text-gray-400 text-center py-4">No validations yet.</p>
       {% endif %}
+      {% if verdict_counts.get('unknown', 0) > 0 %}
+      <div class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+        <button
+          hx-post="/admin/retry-unknowns?batch_size=500"
+          hx-confirm="Dispatch the retry_unknowns workflow? It re-runs all unknown verdicts in batches of 500 (caps at 3 concurrent GHA runs)."
+          hx-on::after-request="if (event.detail.successful) alert('Retry workflow dispatched. Watch GitHub Actions for progress.'); else alert('Dispatch failed: ' + event.detail.xhr.responseText)"
+          class="w-full text-xs font-medium px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition">
+          ↻ Retry {{ verdict_counts.get('unknown', 0) }} unknowns (batches of 500)
+        </button>
+      </div>
+      {% endif %}
     </div>
 
     <!-- Quick actions -->

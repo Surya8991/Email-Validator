@@ -444,6 +444,69 @@ async def admin_revoke_invite(
     return RedirectResponse(url="/admin/users", status_code=302)
 
 
+@router.post("/retry-unknowns")
+async def admin_retry_unknowns(
+    batch_size: int = 500,
+    max_batches: int = 0,
+    since_days: int = 0,
+    providers: str = "bouncify",
+    strategy: str = "bouncify_only",
+    job_id: int | None = None,
+    current_user: User = Depends(require_admin),
+):
+    """Dispatch the retry_unknowns workflow. Args accepted as query params
+    or form data so the htmx button can fire with no body at all.
+
+    Returns 502 with the GitHub API error if dispatch fails so the UI can
+    surface it instead of silently no-op'ing. Returns 503 when GITHUB_PAT
+    is not configured (e.g. local dev with no GitHub creds).
+    """
+    import httpx as _httpx
+
+    if not settings.github_pat or not settings.github_repo:
+        raise HTTPException(
+            status_code=503,
+            detail="GITHUB_PAT / GITHUB_REPO not configured — can't dispatch the workflow.",
+        )
+    inputs: dict[str, str] = {
+        "batch_size": str(batch_size),
+        "max_batches": str(max_batches),
+        "since_days": str(since_days),
+        "providers": providers,
+        "strategy": strategy,
+    }
+    if job_id:
+        inputs["job_id"] = str(job_id)
+
+    try:
+        owner, repo = settings.github_repo.split("/", 1)
+    except ValueError:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GITHUB_REPO is malformed: {settings.github_repo!r}",
+        )
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}/"
+        "actions/workflows/retry_unknowns.yml/dispatches"
+    )
+    async with _httpx.AsyncClient(timeout=4.0) as client:
+        resp = await client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.github_pat}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"ref": "main", "inputs": inputs},
+        )
+    if resp.status_code != 204:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub dispatch failed ({resp.status_code}): {resp.text[:200]}",
+        )
+    return {"ok": True, "dispatched": True, "inputs": inputs}
+
+
 @router.get("/account-cleanup", response_class=HTMLResponse)
 async def account_cleanup_page(request: Request, current_user: User = Depends(require_admin)):
     """Big-CSV cleanup tool. The browser parses + filters the file; the
