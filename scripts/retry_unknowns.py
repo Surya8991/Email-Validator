@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -52,7 +53,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-CHUNK_SIZE = _env_int("CHUNK_SIZE", 20)
+# Default 5 (lower than bulk_process's 20) because retry runs single-worker
+# against emails Bouncify already failed on — heavier per-call latency,
+# higher 429 risk. Bump via CHUNK_SIZE repo variable if you see steady
+# headroom in the progress log.
+CHUNK_SIZE = _env_int("CHUNK_SIZE", 5)
+# Log a progress line every this many emails inside a batch so GHA shows
+# live throughput instead of going dark for ~10 min per 500-email batch.
+PROGRESS_EVERY = _env_int("PROGRESS_EVERY", 50)
 
 
 def _unknown_emails(
@@ -138,6 +146,9 @@ async def _process_batch(
     job_id: int | None,
 ) -> dict[str, int]:
     stats = {"resolved": 0, "still_unknown": 0, "rows_updated": 0, "errors": 0}
+    done = 0
+    started = time.monotonic()
+    next_progress_at = PROGRESS_EVERY
     for i in range(0, len(emails), CHUNK_SIZE):
         slice_ = emails[i : i + CHUNK_SIZE]
         tasks = [_validate_one(em, providers, strategy) for em in slice_]
@@ -158,6 +169,17 @@ async def _process_batch(
                 stats["resolved"] += 1
                 stats["rows_updated"] += rows
             session.commit()
+        done += len(slice_)
+        if done >= next_progress_at or done == len(emails):
+            elapsed = time.monotonic() - started
+            rate = done / elapsed if elapsed > 0 else 0
+            print(
+                f"    {done}/{len(emails)} | resolved={stats['resolved']} "
+                f"still_unknown={stats['still_unknown']} errors={stats['errors']} "
+                f"| {rate:.1f} emails/s",
+                flush=True,
+            )
+            next_progress_at = done + PROGRESS_EVERY
     return stats
 
 
