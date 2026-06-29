@@ -5,7 +5,7 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.10.0** (security hardening — see [PROJECT_LOG.md](PROJECT_LOG.md) Session 13).
+Current version: **0.10.1** (bulk throughput — Bouncify bulk API wired up. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 14.)
 
 ---
 

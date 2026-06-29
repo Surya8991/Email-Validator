@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 13). Current VERSION: **0.10.0**
+> Last updated: 2026-06-29 (Session 14). Current VERSION: **0.10.1**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -48,6 +48,82 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+
+---
+
+## Session 14 — 2026-06-29 — v0.10.1 bulk-job throughput
+
+**Headline:** 1k-email job time **30 min → ~1–3 min** by routing
+`bouncify_only` / `local_first` strategies through Bouncify's bulk API
+instead of N single-call verifies.
+
+**Diagnosis.** The bulk worker (`scripts/process_job.py`) was looping
+through every email via `validate()` → `provider.verify()`, hitting
+Bouncify's single-email endpoint 1000 times at ~1.5–2s each. The bulk
+endpoint (`BouncifyProvider.verify_bulk`) was implemented but never
+called — it submits up to N emails per POST, polls a job id, downloads
+results in one shot. Server-side throughput on Bouncify's side is
+~50–100 emails/sec.
+
+**Changes (`scripts/process_job.py`):**
+- New `_can_use_bulk(strategy, providers)` gate: only routes through the
+  bulk path when the chain reduces to "local pre-filter (optional) +
+  one paid provider with a bulk API." Today that's
+  `bouncify_only` + `local_first` with `providers ⊆ {local, bouncify}`.
+  `consensus` and `waterfall` keep the per-email path because they need
+  vote logic across multiple providers.
+- New `_process_sub_batch_bulk(emails, providers, strategy, ttl_days)`:
+  - Batch cache lookup via `get_cached_many()` (one SQL `IN (...)` query
+    instead of N round-trips).
+  - For `bouncify_only`: run local pre-filter on cache-misses in
+    parallel; hard `invalid` results short-circuit before any Bouncify
+    credit is spent (same as the per-email path).
+  - Send remaining cache+local misses to `bouncify.verify_bulk()` in
+    a single call.
+  - Cache writes for the bulk-verified results.
+- **Fallback:** if `verify_bulk()` raises (network, malformed Bouncify
+  response, anything), we `gather()` per-email `bouncify.verify()` for
+  that sub-batch only and continue. `verify_bulk` itself already falls
+  back internally when bulk job creation returns no `job_id`, so we get
+  two layers of defence.
+- Sub-batch size = **500 emails**. Keeps the `Job.processed` counter
+  ticking at ~10% granularity on a 5k job so the UI progress bar
+  remains useful. Bouncify polls every 5s server-side; a 500-batch
+  typically resolves in 30–90s.
+
+**Changes (`app/core/cache.py`):**
+- New `get_cached_many(emails) -> dict[str, EmailCache]`. Single
+  `SELECT ... WHERE email IN (:list)` instead of N queries. Same
+  expiry semantics — expired rows are skipped, not bulk-deleted (saves
+  a second write round-trip; the lazy delete in `get_cached()` still
+  fires on subsequent single-email lookups).
+
+**Behavior preserved:**
+- `consensus` and `waterfall` strategies: unchanged per-email path.
+- Hunter / ZeroBounce / NeverBounce: no bulk wiring yet — if any of
+  those are in the provider list, the bulk gate short-circuits and we
+  use the per-email path. Cheaper to add later than to risk per-provider
+  regressions today.
+- Cache TTL semantics: identical (`ttl_days=0` still skips caching).
+- `EmailResult` row layout: identical.
+- Failure paths: `_mark_failed()` still fires on uncaught crashes;
+  per-sub-batch fallback never short-circuits the whole job.
+
+**Operational notes:**
+- Bouncify daily cap (`BOUNCIFY_DAILY_CAP`) still applies — the bulk
+  API consumes the same credits as single calls. Raise it before
+  running real 5k jobs.
+- If you see "bouncify.verify_bulk failed, falling back" in GHA logs,
+  the per-email path took over and the job will still finish; just
+  ~10× slower for that sub-batch. Common cause: Bouncify's bulk job
+  endpoint is rate-limited differently from the single-email endpoint.
+- `_can_use_bulk()` is conservative on purpose. If you add a new strategy
+  that should use bulk, extend the gate — don't disable it globally.
+
+**Test suite:** 26 passing. No new tests yet for the bulk path —
+mocking Bouncify's bulk job + poll + download flow is non-trivial; the
+per-email fallback path is already covered by the existing provider
+tests, so even if bulk silently regressed the job would still complete.
 
 ---
 

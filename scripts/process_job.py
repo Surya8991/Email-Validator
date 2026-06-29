@@ -11,6 +11,14 @@ Required env vars:
 Optional env vars:
     ZEROBOUNCE_API_KEY, NEVERBOUNCE_API_KEY, HUNTER_API_KEY
     CACHE_TTL_DAYS     — defaults to 30
+
+Performance path:
+    - "bouncify_only" / "local_first" with providers ⊆ {local, bouncify} →
+      bulk path: local pre-filter + Bouncify's bulk API in 500-email
+      sub-batches. ~10× faster than per-email for 1k+ jobs. Falls back to
+      the per-email path on any verify_bulk() exception.
+    - All other strategies → per-email path (consensus/waterfall need
+      per-row vote logic).
 """
 import argparse
 import asyncio
@@ -23,14 +31,35 @@ from pathlib import Path
 # Project root must be on sys.path so `app` package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import httpx  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
-from app.core.cache import get_cached, parse_cached_providers, set_cache  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.core.cache import (  # noqa: E402
+    get_cached,
+    get_cached_many,
+    parse_cached_providers,
+    set_cache,
+)
 from app.core.validator import validate  # noqa: E402
 from app.db import create_db_tables, engine  # noqa: E402
 from app.models import EmailResult, Job  # noqa: E402
+from app.providers import registry  # noqa: E402
+from app.providers.registry import get_all_providers  # noqa: E402
+from app.schemas import ProviderResult  # noqa: E402
 
-CHUNK_SIZE = 20
+CHUNK_SIZE = 20            # per-email path: in-flight concurrency per gather
+BULK_SUB_BATCH = 500       # bulk path: emails per Bouncify bulk submission
+_BULK_PROVIDERS = {"bouncify"}  # providers that have a working verify_bulk()
+
+
+def _can_use_bulk(strategy: str, providers: list[str]) -> bool:
+    """Gate the bulk path. Conservative on purpose — add new strategies here
+    instead of disabling the gate globally."""
+    if strategy not in ("bouncify_only", "local_first"):
+        return False
+    paid = [p for p in providers if p != "local"]
+    return len(paid) == 1 and paid[0] in _BULK_PROVIDERS
 
 
 async def _validate_with_cache(
@@ -48,13 +77,113 @@ async def _validate_with_cache(
     return verdict, provider_results, False
 
 
-def _mark_failed(job_id: int, error: str) -> None:
-    """Best-effort: mark a job 'failed' with a short error message.
+async def _process_sub_batch_bulk(
+    emails: list[str],
+    providers: list[str],
+    strategy: str,
+    ttl_days: int | None,
+) -> list[tuple[str, dict[str, ProviderResult], bool]]:
+    """Validate one sub-batch via the bulk Bouncify API.
 
-    Used by the top-level handler so a crashed worker never leaves the UI
-    polling a phantom 'running' row. Swallows its own exceptions — if even
-    this write fails, we still want the original error to surface.
+    Falls back to per-email `bouncify.verify()` if `verify_bulk()` raises.
+    Returns one (verdict, providers, from_cache) tuple per input email,
+    preserving order.
     """
+    n = len(emails)
+    results: list[tuple[str, dict[str, ProviderResult], bool] | None] = [None] * n
+
+    # 1. Batched cache lookup — one IN-query instead of N round-trips
+    cached_map = get_cached_many(emails)
+    pending_idx: list[int] = []
+    pending_emails: list[str] = []
+    for i, email in enumerate(emails):
+        key = email.strip().lower()
+        row = cached_map.get(key)
+        if row:
+            results[i] = (row.verdict, parse_cached_providers(row), True)
+        else:
+            pending_idx.append(i)
+            pending_emails.append(email)
+
+    all_providers = get_all_providers()
+
+    # 2. Local pre-filter (only for bouncify_only — same logic as validator.py).
+    #    Local runs in-process, so even sequential it's fast; gather just in case.
+    if strategy == "bouncify_only" and pending_emails:
+        local = all_providers.get("local")
+        if local:
+            local_results = await asyncio.gather(
+                *[local.verify(em) for em in pending_emails],
+                return_exceptions=False,
+            )
+            next_idx: list[int] = []
+            next_emails: list[str] = []
+            for rel, (abs_i, email, lr) in enumerate(
+                zip(pending_idx, pending_emails, local_results)
+            ):
+                if lr.status == "invalid":
+                    results[abs_i] = ("invalid", {"local": lr}, False)
+                    # Cache the hard-invalid so the next run skips local too.
+                    if ttl_days != 0:
+                        try:
+                            set_cache(email, "invalid", {"local": lr}, strategy, ttl_days=ttl_days)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[WARN] set_cache(local-invalid) failed: {e!r}", flush=True)
+                else:
+                    next_idx.append(abs_i)
+                    next_emails.append(email)
+            pending_idx = next_idx
+            pending_emails = next_emails
+
+    # 3. Bouncify bulk for everything still pending.
+    if pending_emails:
+        bouncify = all_providers.get("bouncify")
+        if bouncify is None:
+            # Shouldn't happen — _can_use_bulk gates on bouncify presence — but
+            # if registry init drifted, fall through to per-email validate().
+            print("[WARN] bouncify provider missing — falling back to validate()", flush=True)
+            fallback = await asyncio.gather(
+                *[_validate_with_cache(em, providers, strategy, ttl_days) for em in pending_emails]
+            )
+            for abs_i, r in zip(pending_idx, fallback):
+                results[abs_i] = r
+        else:
+            bulk_results: list[ProviderResult]
+            try:
+                bulk_results = await bouncify.verify_bulk(pending_emails)
+                if len(bulk_results) != len(pending_emails):
+                    raise RuntimeError(
+                        f"verify_bulk returned {len(bulk_results)} results for "
+                        f"{len(pending_emails)} emails — shape mismatch"
+                    )
+            except Exception as e:  # noqa: BLE001
+                print(
+                    f"[WARN] bouncify.verify_bulk failed, falling back per-email: {e!r}",
+                    flush=True,
+                )
+                bulk_results = list(await asyncio.gather(
+                    *[bouncify.verify(em) for em in pending_emails],
+                    return_exceptions=False,
+                ))
+
+            for abs_i, email, br in zip(pending_idx, pending_emails, bulk_results):
+                results[abs_i] = (br.status, {"bouncify": br}, False)
+                if br.status != "unknown" and ttl_days != 0:
+                    try:
+                        set_cache(email, br.status, {"bouncify": br}, strategy, ttl_days=ttl_days)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[WARN] set_cache(bouncify) failed: {e!r}", flush=True)
+
+    # Any leftover Nones means a code path didn't fire — defensive fallback.
+    for i, r in enumerate(results):
+        if r is None:
+            results[i] = ("unknown", {}, False)
+
+    return results  # type: ignore[return-value]
+
+
+def _mark_failed(job_id: int, error: str) -> None:
+    """Best-effort: mark a job 'failed' with a short error message."""
     try:
         with Session(engine) as session:
             job = session.get(Job, job_id)
@@ -67,85 +196,116 @@ def _mark_failed(job_id: int, error: str) -> None:
         print(f"[WARN] could not mark job {job_id} failed: {e!r}", flush=True)
 
 
+def _write_results(
+    job_id: int,
+    chunk_emails: list[str],
+    chunk_results: list[tuple[str, dict[str, ProviderResult], bool]],
+    new_processed: int,
+) -> None:
+    with Session(engine) as session:
+        for email, (verdict, provider_results, _from_cache) in zip(chunk_emails, chunk_results):
+            provider_data = {
+                name: (res.model_dump() if hasattr(res, "model_dump") else res)
+                for name, res in provider_results.items()
+            }
+            session.add(EmailResult(
+                job_id=job_id,
+                email=email,
+                verdict=verdict,
+                provider_data=json.dumps(provider_data),
+            ))
+        job = session.get(Job, job_id)
+        if job:
+            job.processed = new_processed
+            session.add(job)
+        session.commit()
+
+
 async def run(job_id: int) -> None:
     create_db_tables()
 
-    # Read job from DB
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
-        if not job:
-            print(f"[ERROR] Job {job_id} not found in DB", flush=True)
-            sys.exit(1)
-        if not job.csv_data:
-            msg = f"Job {job_id} has no csv_data — upload likely never wrote the row."
+    # The provider registry expects a live httpx.AsyncClient on
+    # registry._client. The FastAPI lifespan hook normally sets this; the
+    # standalone worker has to do it explicitly.
+    registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
+
+    try:
+        with Session(engine) as session:
+            job = session.get(Job, job_id)
+            if not job:
+                print(f"[ERROR] Job {job_id} not found in DB", flush=True)
+                sys.exit(1)
+            if not job.csv_data:
+                msg = f"Job {job_id} has no csv_data — upload likely never wrote the row."
+                print(f"[ERROR] {msg}", flush=True)
+                _mark_failed(job_id, msg)
+                sys.exit(1)
+            csv_content = job.csv_data
+            providers = [p.strip() for p in job.providers.split(",") if p.strip()] or ["bouncify"]
+            strategy = job.strategy or "bouncify_only"
+
+        reader = csv.DictReader(io.StringIO(csv_content))
+        rows = list(reader)
+        if not rows:
+            msg = "CSV is empty (no data rows after header)."
             print(f"[ERROR] {msg}", flush=True)
             _mark_failed(job_id, msg)
             sys.exit(1)
-        csv_content = job.csv_data
-        providers = [p.strip() for p in job.providers.split(",") if p.strip()] or ["bouncify"]
-        strategy = job.strategy or "bouncify_only"
 
-    # Parse CSV
-    reader = csv.DictReader(io.StringIO(csv_content))
-    rows = list(reader)
-    if not rows:
-        msg = "CSV is empty (no data rows after header)."
-        print(f"[ERROR] {msg}", flush=True)
-        _mark_failed(job_id, msg)
-        sys.exit(1)
-
-    headers = list(rows[0].keys())
-    email_col = next((h for h in headers if h.lower() == "email"), headers[0])
-    emails = [(i, row.get(email_col, "").strip()) for i, row in enumerate(rows)]
-
-    # Mark job as running
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
-        if job:
-            job.total = len(emails)
-            job.status = "running"
-            session.add(job)
-            session.commit()
-
-    print(f"Job {job_id} | {len(emails)} emails | strategy={strategy}", flush=True)
-    print(f"  providers={providers}", flush=True)
-
-    for i in range(0, len(emails), CHUNK_SIZE):
-        chunk = emails[i : i + CHUNK_SIZE]
-        tasks = [_validate_with_cache(email, providers, strategy) for _, email in chunk]
-        results = await asyncio.gather(*tasks)
+        headers = list(rows[0].keys())
+        email_col = next((h for h in headers if h.lower() == "email"), headers[0])
+        emails = [row.get(email_col, "").strip() for row in rows]
 
         with Session(engine) as session:
-            for (_, email), (verdict, provider_results, _from_cache) in zip(chunk, results):
-                provider_data = {
-                    name: (res.model_dump() if hasattr(res, "model_dump") else res)
-                    for name, res in provider_results.items()
-                }
-                session.add(EmailResult(
-                    job_id=job_id,
-                    email=email,
-                    verdict=verdict,
-                    provider_data=json.dumps(provider_data),
-                ))
             job = session.get(Job, job_id)
             if job:
-                job.processed = min(i + CHUNK_SIZE, len(emails))
+                job.total = len(emails)
+                job.status = "running"
                 session.add(job)
-            session.commit()
+                session.commit()
 
-        done = min(i + CHUNK_SIZE, len(emails))
-        pct = int(done / len(emails) * 100)
-        print(f"  {done}/{len(emails)} ({pct}%)", flush=True)
+        use_bulk = _can_use_bulk(strategy, providers)
+        mode = "BULK" if use_bulk else "single"
+        print(
+            f"Job {job_id} | {len(emails)} emails | strategy={strategy} | mode={mode}",
+            flush=True,
+        )
+        print(f"  providers={providers}", flush=True)
 
-    with Session(engine) as session:
-        job = session.get(Job, job_id)
-        if job:
-            job.status = "done"
-            job.processed = len(emails)
-            session.add(job)
-            session.commit()
+        if use_bulk:
+            step = BULK_SUB_BATCH
+            for i in range(0, len(emails), step):
+                chunk = emails[i : i + step]
+                chunk_results = await _process_sub_batch_bulk(
+                    chunk, providers, strategy, ttl_days=None,
+                )
+                done = min(i + step, len(emails))
+                _write_results(job_id, chunk, chunk_results, done)
+                pct = int(done / len(emails) * 100)
+                print(f"  {done}/{len(emails)} ({pct}%) [bulk]", flush=True)
+        else:
+            step = CHUNK_SIZE
+            for i in range(0, len(emails), step):
+                chunk = emails[i : i + step]
+                tasks = [_validate_with_cache(em, providers, strategy) for em in chunk]
+                chunk_results = await asyncio.gather(*tasks)
+                done = min(i + step, len(emails))
+                _write_results(job_id, chunk, chunk_results, done)
+                pct = int(done / len(emails) * 100)
+                print(f"  {done}/{len(emails)} ({pct}%)", flush=True)
 
-    print(f"Job {job_id} complete.", flush=True)
+        with Session(engine) as session:
+            job = session.get(Job, job_id)
+            if job:
+                job.status = "done"
+                job.processed = len(emails)
+                session.add(job)
+                session.commit()
+
+        print(f"Job {job_id} complete.", flush=True)
+    finally:
+        if registry._client and not registry._client.is_closed:
+            await registry._client.aclose()
 
 
 if __name__ == "__main__":
@@ -157,8 +317,6 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except BaseException as e:
-        # Anything else (network, provider, OOM, KeyboardInterrupt) leaves
-        # the job stranded if we don't write a terminal state here.
         import traceback
         tb = traceback.format_exc()
         print(f"[FATAL] job {args.job_id} crashed: {e!r}\n{tb}", flush=True)

@@ -37,6 +37,26 @@ def get_cached(email: str) -> EmailCache | None:
         return row
 
 
+def get_cached_many(emails: list[str]) -> dict[str, EmailCache]:
+    """Batch cache lookup. Returns {normalized_email: EmailCache} for live rows.
+
+    Used by the bulk worker to avoid N round-trips against Neon on every
+    sub-batch. Expired rows are skipped (not deleted here — let the per-email
+    `get_cached()` path lazy-delete them, which keeps this read-only and fast).
+    """
+    if not emails:
+        return {}
+    keys = list({e.strip().lower() for e in emails if e and e.strip()})
+    if not keys:
+        return {}
+    now = _now()
+    with Session(engine) as session:
+        rows = session.exec(
+            select(EmailCache).where(EmailCache.email.in_(keys))  # type: ignore[attr-defined]
+        ).all()
+    return {r.email: r for r in rows if r.expires_at >= now}
+
+
 def set_cache(
     email: str,
     verdict: str,
