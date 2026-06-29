@@ -452,6 +452,7 @@ async def admin_retry_unknowns(
     providers: str = "bouncify",
     strategy: str = "bouncify_only",
     job_id: int | None = None,
+    strikes: int = 3,
     current_user: User = Depends(require_admin),
 ):
     """Dispatch the retry_unknowns workflow. Args accepted as query params
@@ -474,6 +475,7 @@ async def admin_retry_unknowns(
         "since_days": str(since_days),
         "providers": providers,
         "strategy": strategy,
+        "strikes": str(strikes),
     }
     if job_id:
         inputs["job_id"] = str(job_id)

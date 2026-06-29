@@ -24,6 +24,12 @@ class EmailResult(SQLModel, table=True):
     verdict: str  # valid | invalid | risky | unknown
     provider_data: str = "{}"  # JSON string of per-provider results
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Number of times retry_unknowns has re-validated this row. After
+    # UNKNOWN_STRIKES (default 3) failed re-validations the row's verdict
+    # flips from 'unknown' to 'invalid' so it leaves the retry pool —
+    # persistent unknowns are almost always dead MX / parked domains
+    # that won't deliver, treating them as invalid stops burning credits.
+    retry_count: int = Field(default=0)
 
 
 class EmailCache(SQLModel, table=True):

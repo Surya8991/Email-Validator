@@ -69,10 +69,15 @@ def _unknown_emails(
     *,
     job_id: int | None,
     since: datetime | None,
+    strikes: int,
     exclude: set[str] | None = None,
 ) -> list[str]:
-    clauses = ["verdict = 'unknown'"]
-    params: dict = {"limit": batch_size}
+    # `retry_count < strikes` skips emails that have already burned through
+    # their strikes budget — those rows still sit at verdict='unknown' but
+    # we won't pay Bouncify for them again. The strike-out flip to 'invalid'
+    # happens in _mark_still_unknown after the (strikes-th) attempt.
+    clauses = ["verdict = 'unknown'", "retry_count < :strikes"]
+    params: dict = {"limit": batch_size, "strikes": strikes}
     if job_id is not None:
         clauses.append("job_id = :jid")
         params["jid"] = job_id
@@ -106,6 +111,9 @@ def _update_rows(
     *,
     job_id: int | None,
 ) -> int:
+    """Mark all 'unknown' rows for this email as the new (resolved) verdict.
+    retry_count is reset to 0 — the email left the unknown pool so the
+    strike history is moot."""
     clauses = ["email = :email", "verdict = 'unknown'"]
     params: dict = {
         "email": email,
@@ -117,10 +125,46 @@ def _update_rows(
         params["jid"] = job_id
     where = " AND ".join(clauses)
     sql = (
-        f"UPDATE emailresult SET verdict = :verdict_new, provider_data = :pdata "
-        f"WHERE {where}"
+        f"UPDATE emailresult SET verdict = :verdict_new, provider_data = :pdata, "
+        f"retry_count = 0 WHERE {where}"
     )
     return session.execute(text(sql), params).rowcount or 0
+
+
+def _mark_still_unknown(
+    session: Session,
+    email: str,
+    *,
+    strikes: int,
+    job_id: int | None,
+) -> tuple[int, int]:
+    """Increment retry_count on every still-unknown row for this email.
+    If the new count reaches `strikes`, also flip verdict to 'invalid'
+    in the same UPDATE — persistent unknowns are dead-MX / parked
+    domains in practice, treating them as invalid stops the bleeding.
+
+    Returns (rows_incremented, rows_struck_out).
+    """
+    clauses = ["email = :email", "verdict = 'unknown'"]
+    params: dict = {"email": email, "strikes": strikes}
+    if job_id is not None:
+        clauses.append("job_id = :jid")
+        params["jid"] = job_id
+    where = " AND ".join(clauses)
+    # Count rows about to strike out BEFORE the UPDATE — the UPDATE
+    # flips their verdict, so a post-UPDATE count by verdict='unknown'
+    # would miss them.
+    struck = session.execute(text(
+        f"SELECT COUNT(*) FROM emailresult WHERE {where} AND retry_count + 1 >= :strikes"
+    ), params).scalar() or 0
+    sql = (
+        f"UPDATE emailresult SET "
+        f"retry_count = retry_count + 1, "
+        f"verdict = CASE WHEN retry_count + 1 >= :strikes THEN 'invalid' ELSE 'unknown' END "
+        f"WHERE {where}"
+    )
+    rows = session.execute(text(sql), params).rowcount or 0
+    return rows, struck
 
 
 async def _validate_one(
@@ -144,8 +188,15 @@ async def _process_batch(
     strategy: str,
     *,
     job_id: int | None,
+    strikes: int,
 ) -> dict[str, int]:
-    stats = {"resolved": 0, "still_unknown": 0, "rows_updated": 0, "errors": 0}
+    stats = {
+        "resolved": 0,
+        "still_unknown": 0,
+        "struck_out": 0,
+        "rows_updated": 0,
+        "errors": 0,
+    }
     done = 0
     started = time.monotonic()
     next_progress_at = PROGRESS_EVERY
@@ -161,7 +212,11 @@ async def _process_batch(
                     continue
                 verdict, pdata = res
                 if verdict == "unknown":
+                    rows, struck = _mark_still_unknown(
+                        session, em, strikes=strikes, job_id=job_id,
+                    )
                     stats["still_unknown"] += 1
+                    stats["struck_out"] += struck
                     continue
                 rows = _update_rows(
                     session, em, verdict, json.dumps(pdata), job_id=job_id,
@@ -175,8 +230,8 @@ async def _process_batch(
             rate = done / elapsed if elapsed > 0 else 0
             print(
                 f"    {done}/{len(emails)} | resolved={stats['resolved']} "
-                f"still_unknown={stats['still_unknown']} errors={stats['errors']} "
-                f"| {rate:.1f} emails/s",
+                f"still_unknown={stats['still_unknown']} struck_out={stats['struck_out']} "
+                f"errors={stats['errors']} | {rate:.1f} emails/s",
                 flush=True,
             )
             next_progress_at = done + PROGRESS_EVERY
@@ -195,7 +250,10 @@ async def run(args: argparse.Namespace) -> int:
         else None
     )
 
-    total = {"resolved": 0, "still_unknown": 0, "rows_updated": 0, "errors": 0, "batches": 0}
+    total = {
+        "resolved": 0, "still_unknown": 0, "struck_out": 0,
+        "rows_updated": 0, "errors": 0, "batches": 0,
+    }
     # Without this, a batch whose every email comes back 'unknown' again
     # (Bouncify still timing out on them) would refetch the same 500 next
     # round — ORDER BY email LIMIT 500 doesn't move on. Exclude
@@ -209,6 +267,7 @@ async def run(args: argparse.Namespace) -> int:
                     args.batch_size,
                     job_id=args.job_id,
                     since=since,
+                    strikes=args.strikes,
                     exclude=attempted,
                 )
             if not emails:
@@ -218,14 +277,15 @@ async def run(args: argparse.Namespace) -> int:
             print(
                 f"[batch {batch_no}] {len(emails)} unknowns | "
                 f"providers={providers} | strategy={strategy} | "
-                f"attempted-so-far={len(attempted)}",
+                f"strikes={args.strikes} | attempted-so-far={len(attempted)}",
                 flush=True,
             )
             stats = await _process_batch(
-                emails, providers, strategy, job_id=args.job_id,
+                emails, providers, strategy,
+                job_id=args.job_id, strikes=args.strikes,
             )
             total["batches"] += 1
-            for k in ("resolved", "still_unknown", "rows_updated", "errors"):
+            for k in ("resolved", "still_unknown", "struck_out", "rows_updated", "errors"):
                 total[k] += stats[k]
             # Safety net for total bouncify outage: if a whole batch
             # produced zero resolutions, the provider is no help right
@@ -240,6 +300,7 @@ async def run(args: argparse.Namespace) -> int:
             print(
                 f"  → resolved={stats['resolved']} "
                 f"still_unknown={stats['still_unknown']} "
+                f"struck_out={stats['struck_out']} "
                 f"rows_updated={stats['rows_updated']} "
                 f"errors={stats['errors']}",
                 flush=True,
@@ -270,6 +331,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Comma-separated provider list (default: bouncify).")
     p.add_argument("--strategy", default=None,
                    help="Validation strategy (default: bouncify_only).")
+    p.add_argument("--strikes", type=int, default=_env_int("UNKNOWN_STRIKES", 3),
+                   help="After this many failed retries an email's verdict flips "
+                        "from 'unknown' to 'invalid' so it leaves the retry pool "
+                        "(default: 3, env: UNKNOWN_STRIKES).")
     return p.parse_args()
 
 
