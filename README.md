@@ -5,7 +5,7 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.10.3** (verify_bulk rewritten to match real Bouncify 5-endpoint flow; opt-in via `BOUNCIFY_BULK=1`. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 17.)
+Current version: **0.11** — workflow callback + retry endpoint, per-user submission caps, 3-strikes rule on persistent unknowns, GHA concurrency=3 across bulk + retry workflows, account-cleanup race fixes, owner-visible jobs columns. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 18.
 
 ---
 
@@ -44,12 +44,34 @@ python -m uvicorn app.main:app --reload
    | `SUPERADMIN_EMAIL` | promoted on every startup |
    | `GITHUB_PAT` | fine-grained PAT — repo: `Email-Validator`, **Actions: Read+Write** |
    | `GITHUB_REPO` | `owner/repo` of this repo |
+   | `JOB_CALLBACK_TOKEN` | shared secret the `bulk_process` workflow uses to call `/api/bulk/{id}/workflow-callback` on success / failure / cancel. Must match the GitHub repo secret of the same name. Generate: `python -c "import secrets; print(secrets.token_hex(16))"`. Without it, jobs cancelled in the GitHub UI stay `running` forever. |
    | `BASE_URL` | public origin (e.g. `https://validator.example.com`) — used for outbound reset/invite links; must be set in production |
    | `PRODUCTION` | `true` to enable HSTS + `secure` session cookies |
 
-3. Set the same `DATABASE_URL` and `BOUNCIFY_API_KEY` as **GitHub Actions secrets** (Settings → Secrets → Actions) so the bulk worker hits the same DB and provider.
+   Optional tuning (sensible defaults shipped):
 
-4. Bulk jobs auto-dispatch from `/api/bulk` → GitHub Actions runs `bulk_process.yml` → writes back to Neon → UI polls progress.
+   | Env | Default | What |
+   |---|---|---|
+   | `MAX_BULK_EMAILS` | `1000` | Per-CSV upload cap. 400 if exceeded. `0` disables. |
+   | `MAX_USER_ACTIVE_JOBS` | `4` | Per-user queued+running jobs cap. 429 if exceeded. |
+   | `MAX_USER_ACTIVE_EMAILS` | `2000` | Per-user sum-of-pending-emails cap. 429 if exceeded. |
+   | `UNKNOWN_STRIKES` | `3` | After this many failed retries, `EmailResult.verdict` flips from `unknown` to `invalid` (see Retry sweep below). |
+
+3. Set these **GitHub Actions secrets** so the bulk + retry workers hit the same DB/provider as Vercel: `DATABASE_URL`, `BOUNCIFY_API_KEY`, `JOB_CALLBACK_TOKEN`.
+
+4. Set these **GitHub Actions variables** (Settings → Secrets and variables → Actions → Variables tab) — all optional:
+
+   | Var | Effect |
+   |---|---|
+   | `APP_URL` | If set (e.g. `https://your-app.vercel.app`), the bulk_process workflow's final `if: always()` step POSTs the run conclusion to `/api/bulk/{id}/workflow-callback`. Without it, the notify step is a silent no-op. |
+   | `CHUNK_SIZE` | Per-email path: in-flight concurrency per `asyncio.gather`. Defaults: 20 in bulk_process, 5 in retry_unknowns. |
+   | `BULK_SUB_BATCH` | Bulk-path: emails per Bouncify bulk submission. Default 500. |
+   | `BOUNCIFY_BULK` | Set `1` to enable the bulk-API path for `bouncify_only` / `local_first` jobs (~10× faster on ≥1k rows). Default off pending a confidence-building comparison run. |
+   | `CACHE_TTL_DAYS` | Cache lifetime default override. |
+
+5. Bulk jobs auto-dispatch from `/api/bulk` → GitHub Actions runs `bulk_process.yml` → writes back to Neon → UI polls progress. Workflow's final step calls back into the app on success / failure / cancel so cancelled-in-the-GH-UI runs no longer stay `running` forever.
+
+6. The `bulk_process` and `retry_unknowns` workflows are both capped at **3 concurrent runs** via a 3-bucket `concurrency:` group (Bouncify rate limits start producing `unknown` past ~3 parallel workers). A 4th dispatch waits in GitHub's own queue until a slot frees up.
 
 ---
 
@@ -71,21 +93,40 @@ Cache hits short-circuit before any provider is called (TTL configurable per req
 Full OpenAPI docs at `/docs`. **All `/api/*` endpoints require a session cookie via `/login`** — anonymous access returns 401/redirect.
 
 ```
-POST   /api/verify                 single email
-POST   /api/bulk                   upload CSV/XLSX → job_id
-GET    /api/bulk/{id}              poll status
-GET    /api/bulk/{id}/download     download results CSV
-DELETE /api/bulk/{id}              delete a job + its results
-POST   /api/bulk/clear             admin — delete all non-running jobs
+POST   /api/verify                              single email
+POST   /api/bulk                                upload CSV/XLSX → job_id
+GET    /api/bulk/{id}                           poll status
+GET    /api/bulk/{id}/download                  download results CSV
+POST   /api/bulk/{id}/retry                     owner/admin — re-dispatch a failed job
+POST   /api/bulk/{id}/workflow-callback         called by GH Actions on run conclusion
+DELETE /api/bulk/{id}                           admin — delete a job + its results
+POST   /api/bulk/clear                          admin — delete all non-running jobs
 
-GET    /api/cache/export           export full cache to CSV
-DELETE /api/cache/{id}             delete one cache row
-POST   /api/cache/purge            delete expired rows
-POST   /api/cache/clear            admin — delete every cache row
+GET    /api/cache/export                        export full cache to CSV
+DELETE /api/cache/{id}                          delete one cache row
+POST   /api/cache/purge                         delete expired rows
+POST   /api/cache/clear                         admin — delete every cache row
 
-GET    /api/stats                  verdict + cache aggregates
-GET    /api/domain/{domain}        domain reputation summary
-GET    /api/health                 status + db_ok + enabled providers
+POST   /admin/retry-unknowns                    admin — dispatch retry_unknowns workflow
+POST   /admin/cache-lookup                      admin — bulk cache verdict lookup (Account Cleanup)
+
+GET    /api/stats                               verdict + cache aggregates
+GET    /api/domain/{domain}                     domain reputation summary
+GET    /api/health                              status + db_ok + enabled providers
+```
+
+## Retry sweep for persistent unknowns
+
+`scripts/retry_unknowns.py` (+ `.github/workflows/retry_unknowns.yml`) re-validates `EmailResult.verdict='unknown'` rows in 500-email batches.
+
+Each pass increments `EmailResult.retry_count` (added by `_apply_lightweight_migrations` on Postgres startup). After `UNKNOWN_STRIKES` (default 3) failed re-validations, the row's verdict flips from `unknown` to `invalid` so it leaves the retry pool — persistent unknowns are dead-MX / parked domains in practice, treating them as invalid stops re-burning Bouncify credits forever.
+
+Trigger from the UI: `/admin/stats` shows a "↻ Retry N unknowns" button when verdict_counts['unknown'] > 0 (capped at 10,000 emails per click).
+
+Trigger from CLI:
+```sh
+gh workflow run retry_unknowns.yml \
+  -f batch_size=500 -f max_batches=20 -f strikes=3
 ```
 
 ---
@@ -93,7 +134,7 @@ GET    /api/health                 status + db_ok + enabled providers
 ## Tests & lint
 
 ```bash
-pytest -q                          # 26 tests, all external HTTP mocked
+pytest -q                          # 36 tests, all external HTTP mocked
 ruff check .
 bash scripts/pre_push_check.sh     # pre-push gate
 ```
@@ -103,7 +144,7 @@ bash scripts/pre_push_check.sh     # pre-push gate
 ## Notes
 
 - All routes auth-gated. Sessions: SHA-256-hashed tokens in DB, HttpOnly cookie. New registrations start inactive — admin must approve. Password change/reset revokes every existing session.
-- Bulk + single-verify endpoints are ownership-scoped — a user only sees their own jobs; admin/superadmin sees all. `Job.user_id` is stamped on creation.
+- Single-verify is ownership-scoped. Bulk job DELETE is **admin-only** (was owner-or-admin until 0.11 — locked down so end-users can't wipe history). Job owner emails are visible to everyone on `/jobs`, `/jobs/{id}`, and the dashboard's Recent Bulk Jobs card.
 - Per-IP rate limits on `/login`, `/forgot-password`, `/register`. Failed-login lockout still applies per-account.
 - Origin-check + security-headers middleware (HSTS in prod) provide CSRF / clickjacking / sniffing defence on top of `samesite="lax"`.
 - Timestamps render in **IST** (UTC+5:30) — DB stays naive-UTC, conversion is display-only via `app/templating.py`.

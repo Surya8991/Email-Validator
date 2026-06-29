@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 17). Current VERSION: **0.10.3**
+> Last updated: 2026-06-29 (Session 18). Current VERSION: **0.11**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -17,7 +17,7 @@
 3. Run app:         python -m uvicorn app.main:app --reload --port 8000
    → http://localhost:8000
 4. API docs:        http://localhost:8000/docs  (FastAPI auto-generated)
-5. Tests:           python -m pytest tests/ -q  → 26 passing
+5. Tests:           python -m pytest tests/ -q  → 36 passing
 6. Lint:            python -m ruff check app/ tests/  → 0 errors
 7. Health check:    GET http://localhost:8000/api/health
    → {"status":"ok","providers_enabled":["local","bouncify"]}
@@ -48,6 +48,59 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+- Use `%` or any arithmetic operator in a GitHub Actions expression — the expression language only supports `()`, `[]`, `.`, `!`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `&&`, `||`. Session 18 shipped `concurrency: bulk-${{ fromJSON(inputs.job_id) % 3 }}` and every dispatched run failed at startup. Use the `endsWith()` partitioning trick (see bulk_process.yml + retry_unknowns.yml).
+- Bring back SELECT-then-INSERT in `app/core/cache.py:set_cache`. Session 18 switched to `INSERT ... ON CONFLICT (email) DO UPDATE` because two parallel workers (or two tasks in the same asyncio.gather chunk hitting a duplicated CSV email) were racing on the SELECT-then-INSERT and tripping `ix_emailcache_email`, crashing the worker mid-write and losing the already-validated rows of that job. UPSERT is the only correct shape; preserve it on both Postgres (`postgresql.insert`) and SQLite (`sqlite.insert`) branches.
+- Render Job owner email in places that read `_JOB_LIST_COLS` without re-joining `User` — Session 18 added `Job.user_id` + `User.email` to the SELECT in `_list_jobs_lightweight`, `_dashboard_aggregates.recent`, and the `/jobs/{id}` query, but **not** to the 2-second poll partial `/jobs/{id}/status` (intentional — it's a hot path). If you add owner-email to a new surface, join `User` there too.
+
+---
+
+## Session 18 — 2026-06-29 — v0.11 ops + reliability sweep
+
+The retry path was broken in three subtle ways and the account-cleanup tool was hitting Vercel timeouts; this session traced and fixed everything, then added the missing back-pressure controls so a single user can't saturate the GHA queue.
+
+**Account Cleanup (/admin/account-cleanup)**
+- Lookup race: clicking **Check cache** twice wiped `state.verdicts` mid-fetch; Filter then ran against an empty map and reported KEPT=84,827 / DROPPED=0 / Verified=0 even though the breakdown said VALID=4,812. Fixed by tracking `state.lookupInFlight`, disabling the Filter button during lookup, and swapping verdicts in atomically only on full success.
+- Case-insensitive cache lookup: `/admin/cache-lookup` now uses `func.lower(EmailCache.email).in_(keys)` so cached rows stored mixed-case are still found. Functional index `ix_emailcache_email_lower` is created idempotently at startup (`_apply_lightweight_migrations`) so the query still uses an index — without it, the LOWER() WHERE blew past Vercel Hobby's 10s function ceiling at 5k keys/call. Frontend batch back to 5,000.
+- UX polish: file-size warning above 250 MB, breakdown grid hidden until lookup hits 100%, Filter button shows "Filtering…" and yields a tick so the click repaints before the synchronous 80k-row loop, sticky download bar, per-row verdict cached during filter so the annotated export is O(n), PapaParse pinned with SRI hash.
+- Race-safe `set_cache` UPSERT — switched from SELECT-then-INSERT to `INSERT ... ON CONFLICT (email) DO UPDATE`. Two parallel GHA runs hitting the same email (or two tasks in the same asyncio.gather chunk with a duplicate in the CSV) were tripping `ix_emailcache_email` and crashing the whole job mid-write.
+
+**Jobs / bulk processing**
+- Owner-email column wired through `_list_jobs_lightweight` → visible on `/jobs`, `/jobs/{id}`, and the dashboard's Recent Bulk Jobs card. Visible to everyone (not just admins).
+- `bulk_process` workflow: `run-name: "Bulk #<id> — <email>"` so GHA runs are scannable. `_trigger_github_actions(triggered_by=current_user.email)`.
+- **New POST /api/bulk/{id}/workflow-callback** — workflow's final `if: always()` step POSTs the run conclusion + GitHub run URL with an `X-Callback-Token` header matched against `JOB_CALLBACK_TOKEN`. Flips jobs to `failed` when the run was cancelled in the GH UI, killed by the runner, or timed out — cases where `_mark_failed` inside the script never ran. Refuses to clobber jobs already in `done` / `failed`. New `linkify` Jinja filter turns the embedded run URL in `job.error` into a clickable link on the progress card.
+- **New POST /api/bulk/{id}/retry** — owner-or-admin, failed-only. Deletes the job's existing `EmailResult` rows (the worker re-iterates the whole CSV), resets `status/processed/error`, re-dispatches. Returns 410 if `csv_data` was pruned. UI: Retry buttons on `/jobs` rows and `/jobs/{id}` (failed-only).
+- **DELETE /api/bulk/{id} is now admin-only** (was owner-or-admin). Buttons hidden for non-admins.
+
+**Submission caps**
+- `MAX_BULK_EMAILS=1000` per CSV upload (was 0 / unlimited). 400 on exceed.
+- `MAX_USER_ACTIVE_JOBS=4` queued+running jobs per user. 429 on exceed.
+- `MAX_USER_ACTIVE_EMAILS=2000` pending emails summed across user's queued+running jobs. 429 on exceed.
+- `Job.total` is now stamped at upload time (was set only by the worker) so the pending-email counter is accurate immediately.
+
+**Workflow concurrency**
+- Both `bulk_process.yml` and `retry_unknowns.yml` cap concurrent runs at **3** via a 3-bucket `concurrency:` group. Bouncify rate limits start producing `unknown` past ~3 parallel workers; throughput per call collapses to ~3-5s and downstream rows mis-resolve. First attempt at `fromJSON(inputs.job_id) % 3` died on dispatch — GHA expression language has no `%` operator. Real fix uses `endsWith()` partitioning on the last digit. **Do NOT regress** to a modulo expression.
+- `BOUNCIFY_BULK`, `CHUNK_SIZE`, `BULK_SUB_BATCH` are now repo-variable knobs the workflow passes through. Tunable without a code change.
+
+**Retry sweep for persistent unknowns**
+- `scripts/retry_unknowns.py` + `.github/workflows/retry_unknowns.yml` re-validate `EmailResult.verdict='unknown'` rows in 500-email batches. Re-validates via the same provider waterfall (cache-checked first), UPDATEs all matching emailresult rows on resolution, writes the cache.
+- **3-strikes rule (Session 18 addition)**: new `EmailResult.retry_count` column (added to `_PG_COLUMN_ADDS` so the startup migration handles prod). After `UNKNOWN_STRIKES=3` failed re-validations, the row's verdict flips from `unknown` to `invalid` so it leaves the retry pool — persistent unknowns are dead-MX / parked domains in practice, treating them as invalid stops re-burning Bouncify credits forever. The retry SELECT also filters `retry_count < strikes`, so struck-out rows are immediately ineligible for the next sweep.
+- Infinite-loop fix: the SELECT tracks an `attempted` set across iterations and adds `email NOT IN :excl` so a batch whose every email comes back unknown again doesn't refetch the same 500 next round. Early-exit when a whole batch resolves zero (provider isn't helping).
+- Live progress: logs `done/total | resolved=N still_unknown=M struck_out=K errors=X | rate emails/s` every 50 emails so a 16-min batch is observable instead of going dark.
+- CHUNK_SIZE default is 5 in retry_unknowns (vs 20 in bulk_process). The retry path hits emails Bouncify already failed on once, latency is heavier; lower in-flight count keeps asyncio.gather windows short so one slow call doesn't hold N-1 others.
+- Admin UI: `/admin/stats` "Verdict breakdown" card grows a `↻ Retry up to 10,000 of N unknowns` button. Switched from HTMX to vanilla fetch — admin/base.html doesn't load htmx and the hx-post was silently no-op'ing.
+- `POST /admin/retry-unknowns` (admin-only) dispatches the workflow; accepts query params for all script flags.
+
+**Testing / lint**
+- 36/36 tests pass (was 26). New test file `tests/test_bulk_callback_retry.py` covers the workflow-callback auth gate, no-clobber on already-done, conclusion mapping, the retry endpoint's failed-only gate, EmailResult cleanup, and the dispatch-fails-flip-back-to-failed path.
+- `auth_client` fixture resets `rate_limit._buckets` between tests — the new file added 8 more `/login` hits which previously tripped the 10/min cap with 429s on unrelated tests.
+
+**Operational**
+- Account remoted to `Surya8991/Email-Validator`. All commits in this session re-authored to `Surya8991 <Suryaraj8991@gmail.com>` via `git rebase --exec` (was `Layruss98266 <Surya.l@edstellar.com>`; GH push-protection on `Layruss98266` was rejecting the original commits).
+
+**Required env vars (added this session)**
+- Vercel: `JOB_CALLBACK_TOKEN` (random 32+ chars; generate `python -c "import secrets; print(secrets.token_hex(16))"`).
+- GitHub repo Secrets: `JOB_CALLBACK_TOKEN` (same value as Vercel).
+- GitHub repo Variables (optional): `APP_URL` (gates the notify step in bulk_process.yml — silent no-op if unset).
 
 ---
 
