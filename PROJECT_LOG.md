@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 15). Current VERSION: **0.10.1**
+> Last updated: 2026-06-29 (Session 16). Current VERSION: **0.10.2**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -48,6 +48,69 @@
 - Put `request` in the Jinja2 context dict when using Starlette 1.3.1 — it causes an unhashable dict key in the Jinja2 LRU cache and a `TypeError` at runtime
 - Replace `env_ignore_empty=True` in `app/config.py` `SettingsConfigDict` with a custom `model_validator(mode="before")` — pydantic-settings runs env-source merging AFTER before-validators, so empty-string env vars (e.g. unset `vars.CACHE_TTL_DAYS`) crash field validation. Session 8 tried this and broke every GHA Bulk run; session 10 fixed it with `env_ignore_empty=True`. Do NOT regress.
 - Tighten `keep_warm.yml` cron below 5 minutes (e.g. back to `*/3`). GitHub Actions documents a 5-min minimum for `schedule:` and silently deprioritizes denser schedules — we observed ZERO scheduled runs for an hour with a 3-min cron, only manual dispatches fired. Session 12 set it to 5-min slots (`2,7,12,...,57 * * * *`).
+
+---
+
+## Session 16 — 2026-06-29 — v0.10.2 HOTFIX: disable bulk-API path
+
+**Reverting v0.10.1's perf change at the routing layer.** The Bouncify
+bulk path was producing bad data in production. Code stays in the repo
+behind `_BULK_ENABLED = False` for when we re-verify it; every job now
+runs through the per-email path (same as job 9 and prior).
+
+**What we saw on job 10 (1k emails, bulk path):**
+- ~178 / 1000 marked `valid` — inverse of job 9's distribution on the
+  same input.
+- Bouncify credits charged: ~200. Job 9 burned 700+ for the same input.
+
+**Diagnosis.** Bouncify charges per email it actually validates, not
+per HTTP call. ~200 credits means only ~200 of the 1000 emails reached
+their validator at all — the rest were silently dropped server-side.
+That points at the submission format in `BouncifyProvider.verify_bulk`:
+either the field name (`emails` vs `emailList`/`email_list`), the
+content type (JSON vs form-encoded), or the per-submission cap doesn't
+match what Bouncify expects. The remaining ~800 emails came back with
+no row data → parser defaulted everything to `"unknown"`.
+
+There's likely a secondary parse-side issue too (key casing for
+`email`/`Email` and `result`/`Status` in the download response), but
+the credit-count alone proves submission is broken, so fixing the
+parser without fixing the POST would still leave most emails dropped.
+
+**Change:**
+- `scripts/process_job.py:_BULK_ENABLED = False`. `_can_use_bulk()`
+  short-circuits before any strategy/provider check. Per-email loop
+  is the only path that runs.
+- Module-level comment explains why and what to fix before flipping it
+  back. **Do NOT flip to True without a working round-trip test
+  against the real Bouncify bulk API.**
+
+**Behavior restored:**
+- 1k-email job: ~30 min (same as job 9).
+- Verdict distribution: matches single-API output (no parser in the way).
+- Bouncify credits: ~1 per non-local-invalid email, as before.
+
+**Job 10 is corrupt.** The 178-valid result set was produced by the
+broken bulk path. Delete (`DELETE FROM emailresult WHERE job_id = 10;
+DELETE FROM job WHERE id = 10;`) and re-upload to get a clean run on
+the per-email path. Cache won't pollute the re-run because most of
+job 10's rows ended up `"unknown"` and `"unknown"` verdicts are
+intentionally never cached.
+
+**Follow-up to re-enable bulk:**
+1. Pull Bouncify's actual bulk-API response shape — easiest way is to
+   inspect `EmailResult.provider_data.raw` on one of the rows where
+   the bulk path *did* return a real verdict. That row shows the field
+   names Bouncify uses.
+2. Fix `BouncifyProvider.verify_bulk` POST body + download parsing to
+   match.
+3. Add `tests/providers/test_bouncify.py::test_verify_bulk` with a
+   respx-mocked Bouncify bulk job + status + download, asserting the
+   verdict distribution matches the per-email path on the same input.
+4. Add defensive post-bulk re-verify in `_process_sub_batch_bulk`:
+   if `unknown_pct > 50%`, full per-email fallback for that sub-batch;
+   else per-email re-verify only the unknowns.
+5. Then flip `_BULK_ENABLED = True`.
 
 ---
 

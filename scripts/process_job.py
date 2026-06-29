@@ -52,10 +52,21 @@ CHUNK_SIZE = 20            # per-email path: in-flight concurrency per gather
 BULK_SUB_BATCH = 500       # bulk path: emails per Bouncify bulk submission
 _BULK_PROVIDERS = {"bouncify"}  # providers that have a working verify_bulk()
 
+# DISABLED in v0.10.2. Job 10 showed the bulk path returned ~18% valid vs the
+# per-email path's ~80% on the same input. Root cause is in
+# `BouncifyProvider.verify_bulk` — likely a submission-format or response-key
+# mismatch with Bouncify's actual bulk API: only ~200 of 1000 emails got
+# real verdicts (credits used), the rest fell through to "unknown". Until
+# we verify against Bouncify's documented format (and add a round-trip
+# test), every job runs through the per-email path — slow but correct.
+# DO NOT flip this back to True without fixing verify_bulk first.
+_BULK_ENABLED = False
+
 
 def _can_use_bulk(strategy: str, providers: list[str]) -> bool:
-    """Gate the bulk path. Conservative on purpose — add new strategies here
-    instead of disabling the gate globally."""
+    """Gate the bulk path. Disabled in 0.10.2 — see _BULK_ENABLED note."""
+    if not _BULK_ENABLED:
+        return False
     if strategy not in ("bouncify_only", "local_first"):
         return False
     paid = [p for p in providers if p != "local"]
