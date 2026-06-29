@@ -1,0 +1,348 @@
+{% extends "admin/base.html" %}
+{% block title %}Account Cleanup{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Account Cleanup</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+      Filter a large CRM export against existing cache verdicts. The CSV is parsed
+      and filtered in your browser — the file itself never leaves this page.
+    </p>
+  </div>
+
+  <!-- Step 1: drop-zone -->
+  <div id="step-upload" class="card p-6">
+    <div id="dropzone"
+      class="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-10 text-center cursor-pointer
+             hover:border-indigo-400 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition">
+      <div class="text-4xl mb-2">📂</div>
+      <p class="text-sm font-medium text-gray-700 dark:text-gray-200">Drop your CSV here or click to choose</p>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+        Stays entirely in your browser. Files up to ~200 MB tested on desktop Chrome.
+      </p>
+      <input type="file" id="file-input" class="hidden" accept=".csv,text/csv"/>
+    </div>
+  </div>
+
+  <!-- Step 2: file summary -->
+  <div id="step-summary" class="card p-6 hidden">
+    <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-3">File loaded</h2>
+    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Filename</dt><dd id="sum-filename" class="font-mono text-xs truncate"></dd></div>
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Rows</dt><dd id="sum-rows" class="font-semibold"></dd></div>
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Unique emails</dt><dd id="sum-unique" class="font-semibold"></dd></div>
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Missing email</dt><dd id="sum-missing" class="font-semibold"></dd></div>
+    </dl>
+    <div class="mt-4">
+      <label class="text-xs text-gray-500 dark:text-gray-400">Email column detected</label>
+      <select id="email-col"
+        class="block mt-1 input-base w-full max-w-xs text-sm"></select>
+    </div>
+    <button id="btn-lookup"
+      class="mt-5 inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+      🔎 Check cache
+    </button>
+  </div>
+
+  <!-- Step 3: verdict breakdown + filter -->
+  <div id="step-breakdown" class="card p-6 hidden">
+    <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-1">Cache breakdown</h2>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+      Filter rule: drop rows whose email is <strong>invalid</strong> or <strong>unknown</strong>
+      in the cache. Keep <strong>valid</strong>, <strong>risky / catch-all</strong>, and any
+      email not in the cache.
+    </p>
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-green-600">Valid (keep)</div>
+        <div id="bd-valid" class="text-xl font-semibold">0</div>
+      </div>
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-amber-600">Risky (keep)</div>
+        <div id="bd-risky" class="text-xl font-semibold">0</div>
+      </div>
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-red-600">Invalid (drop)</div>
+        <div id="bd-invalid" class="text-xl font-semibold">0</div>
+      </div>
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Unknown (drop)</div>
+        <div id="bd-unknown" class="text-xl font-semibold">0</div>
+      </div>
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-indigo-500">Not in cache (keep)</div>
+        <div id="bd-notincache" class="text-xl font-semibold">0</div>
+      </div>
+    </div>
+
+    <div id="progress-block" class="mt-4 hidden">
+      <div class="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+        <div id="progress-bar" class="h-full bg-indigo-500 transition-all" style="width:0%"></div>
+      </div>
+      <p id="progress-label" class="text-xs text-gray-500 dark:text-gray-400 mt-1.5"></p>
+    </div>
+
+    <button id="btn-filter"
+      class="mt-5 inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+      🧹 Filter rows
+    </button>
+  </div>
+
+  <!-- Step 4: exports -->
+  <div id="step-exports" class="card p-6 hidden">
+    <h2 class="text-base font-semibold text-gray-900 dark:text-white mb-3">Downloads</h2>
+    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm mb-4">
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Kept</dt><dd id="out-kept" class="text-lg font-semibold"></dd></div>
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Dropped</dt><dd id="out-dropped" class="text-lg font-semibold"></dd></div>
+      <div><dt class="text-xs uppercase tracking-wide text-gray-500">Total processed</dt><dd id="out-total" class="text-lg font-semibold"></dd></div>
+    </dl>
+    <div class="flex flex-wrap gap-3">
+      <button id="btn-dl-kept"
+        class="inline-flex items-center gap-2 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-sm font-medium px-4 py-2 rounded-lg">
+        ⬇ Cleaned CSV (kept rows)
+      </button>
+      <button id="btn-dl-dropped"
+        class="inline-flex items-center gap-2 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm font-medium px-4 py-2 rounded-lg">
+        ⬇ Dropped rows + reason
+      </button>
+      <button id="btn-dl-annot"
+        class="inline-flex items-center gap-2 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 text-sm font-medium px-4 py-2 rounded-lg">
+        ⬇ Annotated full CSV
+      </button>
+    </div>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mt-4">
+      Re-run with a different file: <a href="/admin/account-cleanup" class="text-indigo-600 hover:underline">reload the page</a>.
+    </p>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script>
+(function () {
+  const state = {
+    filename: null,
+    headers: [],
+    rows: [],            // parsed objects
+    emailCol: null,
+    verdicts: new Map(), // normalized email -> {verdict, validated_at}
+    kept: [],
+    dropped: [],         // {row, reason}
+  };
+
+  const LOOKUP_BATCH = 5000;
+  const DROP_VERDICTS = new Set(["invalid", "unknown"]);
+
+  const $ = (id) => document.getElementById(id);
+  const show = (id) => $(id).classList.remove("hidden");
+  const hide = (id) => $(id).classList.add("hidden");
+
+  // ---- Step 1: file pick ----------------------------------------------------
+  const dz = $("dropzone");
+  const fileInput = $("file-input");
+  dz.addEventListener("click", () => fileInput.click());
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("bg-indigo-50"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("bg-indigo-50"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dz.classList.remove("bg-indigo-50");
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+  fileInput.addEventListener("change", (e) => {
+    if (e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file) {
+    state.filename = file.name;
+    $("sum-filename").textContent = file.name;
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => {
+        state.headers = res.meta.fields || [];
+        state.rows = res.data || [];
+        populateColumnPicker();
+        const detected = detectEmailColumn(state.headers);
+        if (detected) $("email-col").value = detected;
+        recomputeSummary();
+        show("step-summary");
+      },
+      error: (err) => alert("CSV parse failed: " + err.message),
+    });
+  }
+
+  function detectEmailColumn(headers) {
+    const lc = headers.map((h) => (h || "").toLowerCase());
+    const exact = lc.indexOf("email");
+    if (exact >= 0) return headers[exact];
+    const fuzzy = lc.findIndex((h) => h.includes("email") && !h.includes("verified") && !h.includes("count") && !h.includes("opt"));
+    if (fuzzy >= 0) return headers[fuzzy];
+    return headers[0] || null;
+  }
+
+  function populateColumnPicker() {
+    const sel = $("email-col");
+    sel.innerHTML = "";
+    state.headers.forEach((h) => {
+      const opt = document.createElement("option");
+      opt.value = h;
+      opt.textContent = h;
+      sel.appendChild(opt);
+    });
+  }
+
+  function recomputeSummary() {
+    const col = $("email-col").value;
+    state.emailCol = col;
+    const totalRows = state.rows.length;
+    let missing = 0;
+    const seen = new Set();
+    for (const r of state.rows) {
+      const v = (r[col] || "").trim().toLowerCase();
+      if (!v) { missing++; continue; }
+      seen.add(v);
+    }
+    $("sum-rows").textContent = totalRows.toLocaleString();
+    $("sum-unique").textContent = seen.size.toLocaleString();
+    $("sum-missing").textContent = missing.toLocaleString();
+  }
+
+  $("email-col").addEventListener("change", recomputeSummary);
+
+  // ---- Step 2: cache lookup -------------------------------------------------
+  $("btn-lookup").addEventListener("click", async () => {
+    const col = state.emailCol;
+    if (!col) { alert("Pick an email column first."); return; }
+    state.verdicts = new Map();
+
+    const uniqueEmails = [];
+    const seen = new Set();
+    for (const r of state.rows) {
+      const v = (r[col] || "").trim().toLowerCase();
+      if (v && !seen.has(v)) { seen.add(v); uniqueEmails.push(v); }
+    }
+    if (uniqueEmails.length === 0) {
+      alert("No emails found in the selected column.");
+      return;
+    }
+
+    show("progress-block");
+    show("step-breakdown");
+    $("btn-lookup").disabled = true;
+
+    let done = 0;
+    for (let i = 0; i < uniqueEmails.length; i += LOOKUP_BATCH) {
+      const slice = uniqueEmails.slice(i, i + LOOKUP_BATCH);
+      try {
+        const resp = await fetch("/admin/cache-lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: slice }),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const data = await resp.json();
+        const map = data.verdicts || {};
+        for (const [k, v] of Object.entries(map)) {
+          state.verdicts.set(k.toLowerCase(), v);
+        }
+      } catch (e) {
+        alert("Cache lookup failed mid-batch: " + e.message + "\nReload and try a smaller file.");
+        $("btn-lookup").disabled = false;
+        return;
+      }
+      done += slice.length;
+      const pct = Math.round(done * 100 / uniqueEmails.length);
+      $("progress-bar").style.width = pct + "%";
+      $("progress-label").textContent = `Looked up ${done.toLocaleString()} / ${uniqueEmails.length.toLocaleString()} unique emails`;
+    }
+
+    updateBreakdown(uniqueEmails);
+    $("btn-lookup").disabled = false;
+  });
+
+  function updateBreakdown(uniqueEmails) {
+    const counts = { valid: 0, risky: 0, invalid: 0, unknown: 0, notincache: 0 };
+    for (const em of uniqueEmails) {
+      const v = state.verdicts.get(em);
+      if (!v) { counts.notincache++; continue; }
+      if (v.verdict in counts) counts[v.verdict]++;
+      else counts.notincache++;
+    }
+    $("bd-valid").textContent = counts.valid.toLocaleString();
+    $("bd-risky").textContent = counts.risky.toLocaleString();
+    $("bd-invalid").textContent = counts.invalid.toLocaleString();
+    $("bd-unknown").textContent = counts.unknown.toLocaleString();
+    $("bd-notincache").textContent = counts.notincache.toLocaleString();
+  }
+
+  // ---- Step 3: filter -------------------------------------------------------
+  $("btn-filter").addEventListener("click", () => {
+    const col = state.emailCol;
+    state.kept = [];
+    state.dropped = [];
+    for (const row of state.rows) {
+      const em = (row[col] || "").trim().toLowerCase();
+      const v = em ? state.verdicts.get(em) : null;
+      if (v && DROP_VERDICTS.has(v.verdict)) {
+        state.dropped.push({ row, reason: v.verdict });
+      } else {
+        state.kept.push(row);
+      }
+    }
+    $("out-kept").textContent = state.kept.length.toLocaleString();
+    $("out-dropped").textContent = state.dropped.length.toLocaleString();
+    $("out-total").textContent = state.rows.length.toLocaleString();
+    show("step-exports");
+    document.getElementById("step-exports").scrollIntoView({ behavior: "smooth" });
+  });
+
+  // ---- Step 4: downloads ----------------------------------------------------
+  function downloadCSV(filename, headers, rows) {
+    const csv = Papa.unparse({ fields: headers, data: rows });
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  }
+
+  function baseName() {
+    const f = state.filename || "account_info.csv";
+    return f.replace(/\.csv$/i, "");
+  }
+
+  $("btn-dl-kept").addEventListener("click", () => {
+    const rows = state.kept.map((r) => state.headers.map((h) => r[h] ?? ""));
+    downloadCSV(`${baseName()}.cleaned.csv`, state.headers, rows);
+  });
+
+  $("btn-dl-dropped").addEventListener("click", () => {
+    const headers = [...state.headers, "drop_reason"];
+    const rows = state.dropped.map(({ row, reason }) =>
+      [...state.headers.map((h) => row[h] ?? ""), reason]
+    );
+    downloadCSV(`${baseName()}.dropped.csv`, headers, rows);
+  });
+
+  $("btn-dl-annot").addEventListener("click", () => {
+    const headers = [...state.headers, "cache_verdict", "cache_validated_at"];
+    const rows = state.rows.map((row) => {
+      const em = (row[state.emailCol] || "").trim().toLowerCase();
+      const v = em ? state.verdicts.get(em) : null;
+      return [
+        ...state.headers.map((h) => row[h] ?? ""),
+        v ? v.verdict : "",
+        v && v.validated_at ? v.validated_at : "",
+      ];
+    });
+    downloadCSV(`${baseName()}.annotated.csv`, headers, rows);
+  });
+})();
+</script>
+{% endblock %}

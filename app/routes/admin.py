@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import bcrypt
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, text
 from sqlmodel import Session, select
@@ -442,6 +442,59 @@ async def admin_revoke_invite(
             db.delete(invite)
             db.commit()
     return RedirectResponse(url="/admin/users", status_code=302)
+
+
+@router.get("/account-cleanup", response_class=HTMLResponse)
+async def account_cleanup_page(request: Request, current_user: User = Depends(require_admin)):
+    """Big-CSV cleanup tool. The browser parses + filters the file; the
+    server only answers small cache-verdict lookups. Keeps the 113k-row
+    CRM export off Vercel's 4.5 MB request-body limit."""
+    return templates.TemplateResponse(request, "admin/account_cleanup.html", {
+        **_admin_ctx("account-cleanup", current_user),
+    })
+
+
+@router.post("/cache-lookup")
+async def admin_cache_lookup(
+    payload: dict,
+    current_user: User = Depends(require_admin),
+):
+    """Batch cache verdict lookup for the Account Cleanup page.
+
+    Body: {"emails": ["a@x.com", ...]}   (capped at 5,000 per call)
+    Resp: {"verdicts": {"a@x.com": {"verdict": "valid", "validated_at": ".."}, ...}}
+
+    Only emails that exist in the cache are returned — absence in the
+    response means "not in cache" and the browser treats those rows as
+    keep-untouched per the cleanup policy.
+    """
+    emails = payload.get("emails") if isinstance(payload, dict) else None
+    if not isinstance(emails, list):
+        raise HTTPException(status_code=400, detail="`emails` must be a list")
+    if len(emails) > 5000:
+        raise HTTPException(status_code=400, detail="Max 5,000 emails per request")
+
+    keys = list({
+        e.strip().lower() for e in emails
+        if isinstance(e, str) and e.strip()
+    })
+    if not keys:
+        return {"verdicts": {}}
+
+    with Session(engine) as db:
+        rows = db.exec(
+            select(EmailCache.email, EmailCache.verdict, EmailCache.validated_at)
+            .where(EmailCache.email.in_(keys))  # type: ignore[attr-defined]
+        ).all()
+
+    verdicts = {
+        r[0]: {
+            "verdict": r[1],
+            "validated_at": r[2].isoformat() if r[2] else None,
+        }
+        for r in rows
+    }
+    return {"verdicts": verdicts}
 
 
 @router.get("/usage", response_class=HTMLResponse)
