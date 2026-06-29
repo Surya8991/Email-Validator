@@ -101,7 +101,7 @@
                 Retry
               </button>
               {% endif %}
-              {% if job.status != 'running' %}
+              {% if is_admin and job.status != 'running' %}
               <button
                 hx-delete="/api/bulk/{{ job.id }}"
                 hx-target="#job-row-{{ job.id }}"

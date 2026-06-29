@@ -28,7 +28,7 @@
       ↻ Retry job
     </button>
     {% endif %}
-    {% if job.status != 'running' %}
+    {% if current_user and current_user.role in ('admin', 'superadmin') and job.status != 'running' %}
     <button
       hx-delete="/api/bulk/{{ job.id }}"
       hx-confirm="Delete job #{{ job.id }} and all its results? This cannot be undone."

@@ -373,11 +373,11 @@ async def delete_job(job_id: int, current_user: User = Depends(require_auth)):
     A running job cannot be deleted — its worker would crash mid-write
     against a missing FK row. Mark it failed first if you need to abort.
     """
+    if not _is_privileged(current_user):
+        raise HTTPException(status_code=403, detail="Admin only")
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
-        if not _is_privileged(current_user) and job.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Job not found")
         if job.status == "running":
             raise HTTPException(

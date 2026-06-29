@@ -151,7 +151,7 @@ All normalize to: `valid | invalid | risky | unknown`
   `hx-get` + `hx-select=".card"`.
 
 ## Delete endpoints (0.9.2)
-- `DELETE /api/bulk/{id}` — deletes a Job + its EmailResult rows. 409 if `status='running'`.
+- `DELETE /api/bulk/{id}` — admin-only. Deletes a Job + its EmailResult rows. 409 if `status='running'`, 403 for non-admins (was owner-or-admin before; locked down so end-users can't wipe their own — or anyone else's — history).
 - `POST /api/bulk/clear` — admin-only. Deletes all non-running jobs.
 - `DELETE /api/cache/{id}` — auth required (was anonymous before 0.9.2).
 - `POST /api/cache/purge` — auth required. Deletes expired rows only.
