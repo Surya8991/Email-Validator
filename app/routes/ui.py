@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, text
 from sqlmodel import Session, select
@@ -137,16 +137,33 @@ async def validate_page(request: Request, current_user: User = Depends(require_a
     })
 
 
+def _is_privileged(user: User) -> bool:
+    return user.role in ("admin", "superadmin")
+
+
 @router.get("/cache", response_class=HTMLResponse)
 async def cache_browser(request: Request, current_user: User = Depends(require_auth)):
-    return templates.TemplateResponse(request, "cache.html", {
+    # The EmailCache table is shared across all users by design. Plain users
+    # see a scoped "Your Recent Validations" view (last 5 from their own
+    # bulk jobs); admins / superadmins get the full global cache browser.
+    template = "cache.html" if _is_privileged(current_user) else "cache_user.html"
+    return templates.TemplateResponse(request, template, {
         "active_page": "cache",
         "current_user": current_user,
     })
 
 
 @router.get("/partials/cache-table", response_class=HTMLResponse)
-async def cache_table_partial(request: Request, q: str = "", page: int = 1):
+async def cache_table_partial(
+    request: Request,
+    q: str = "",
+    page: int = 1,
+    current_user: User = Depends(require_auth),
+):
+    if not _is_privileged(current_user):
+        # The global cache table is admin-only. Plain users should be calling
+        # /partials/my-recent-validations from cache_user.html instead.
+        raise HTTPException(status_code=403, detail="Admin only")
     limit = 25
     offset = (page - 1) * limit
     with Session(engine) as session:
@@ -167,6 +184,38 @@ async def cache_table_partial(request: Request, q: str = "", page: int = 1):
         "total": total,
         "limit": limit,
         "pages": (total + limit - 1) // limit,
+        "now": datetime.now(UTC).replace(tzinfo=None),
+    })
+
+
+@router.get("/partials/my-recent-validations", response_class=HTMLResponse)
+async def my_recent_validations_partial(
+    request: Request,
+    current_user: User = Depends(require_auth),
+):
+    """Last 5 EmailResult rows from this user's own bulk jobs.
+
+    Single-verify results aren't logged per-user (no UserResult table), so
+    this view only shows bulk-job results. Admins land here too if they
+    follow this URL directly — privileged users normally see the full
+    /cache page instead.
+    """
+    with Session(engine) as session:
+        rows = session.execute(
+            text(
+                "SELECT e.email, e.verdict, e.created_at, j.id AS job_id, "
+                "       j.filename AS job_filename "
+                "FROM emailresult e "
+                "JOIN job j ON j.id = e.job_id "
+                "WHERE j.user_id = :uid "
+                "ORDER BY e.created_at DESC "
+                "LIMIT 5"
+            ),
+            {"uid": current_user.id},
+        ).fetchall()
+
+    return templates.TemplateResponse(request, "partials/my_recent_validations.html", {
+        "rows": [dict(r._mapping) for r in rows],
         "now": datetime.now(UTC).replace(tzinfo=None),
     })
 

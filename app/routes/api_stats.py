@@ -77,8 +77,16 @@ def get_stats(current_user: User = Depends(require_auth)):
     }
 
 
+def _require_admin_cache(current_user: User) -> None:
+    """EmailCache is shared across all users — mutations and bulk reads
+    (export/purge/delete) must stay admin-only."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+
 @router.post("/api/cache/purge")
 def purge_cache(current_user: User = Depends(require_auth)):
+    _require_admin_cache(current_user)
     count = purge_expired()
     return {"purged": count}
 
@@ -86,6 +94,7 @@ def purge_cache(current_user: User = Depends(require_auth)):
 @router.get("/api/cache/export")
 def export_cache(q: str = "", current_user: User = Depends(require_auth)):
     """Stream the cache table as CSV. Honors the same `q` search filter as the browser."""
+    _require_admin_cache(current_user)
     with Session(engine) as session:
         query = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
         if q:
@@ -119,6 +128,7 @@ def export_cache(q: str = "", current_user: User = Depends(require_auth)):
 
 @router.delete("/api/cache/{cache_id}")
 def delete_cache_entry(cache_id: int, current_user: User = Depends(require_auth)):
+    _require_admin_cache(current_user)
     with Session(engine) as session:
         row = session.get(EmailCache, cache_id)
         if not row:

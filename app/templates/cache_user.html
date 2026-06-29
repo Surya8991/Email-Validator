@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Your Recent Validations - Email Validator{% endblock %}
+{% block content %}
+<div class="space-y-6">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Your Recent Validations</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+        The last 5 emails you validated through bulk jobs. The shared cache browser is admin-only.
+      </p>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div id="my-recent"
+      hx-get="/partials/my-recent-validations"
+      hx-trigger="load"
+      hx-swap="innerHTML">
+      <div class="p-8 text-center text-gray-400 text-sm">Loading…</div>
+    </div>
+  </div>
+
+  <div class="text-xs text-gray-400 dark:text-gray-500">
+    Need to see more history? Open <a href="/jobs" class="text-indigo-600 hover:underline">Jobs</a> to view full results per upload.
+  </div>
+
+</div>
+{% endblock %}

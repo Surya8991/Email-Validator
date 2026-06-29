@@ -115,7 +115,7 @@
           {% if active == 'validate' %}{{ bar | safe }}{% endif %}
         </a>
         <a href="/cache" class="{{ nav_base }} {% if active == 'cache' %}{{ nav_on }}{% else %}{{ nav_idle }}{% endif %}">
-          <svg class="w-4 h-4"><use href="#i-zap"/></svg>Cache
+          <svg class="w-4 h-4"><use href="#i-zap"/></svg>{% if current_user and current_user.role in ('admin', 'superadmin') %}Cache{% else %}Recent{% endif %}
           {% if active == 'cache' %}{{ bar | safe }}{% endif %}
         </a>
         <a href="/analytics" class="{{ nav_base }} {% if active == 'analytics' %}{{ nav_on }}{% else %}{{ nav_idle }}{% endif %}">
@@ -237,7 +237,7 @@
         <svg class="w-4 h-4"><use href="#i-check"/></svg>Validate
       </a>
       <a href="/cache" class="{{ m_base }} {% if active == 'cache' %}{{ m_on }}{% else %}{{ m_idle }}{% endif %}">
-        <svg class="w-4 h-4"><use href="#i-zap"/></svg>Cache Browser
+        <svg class="w-4 h-4"><use href="#i-zap"/></svg>{% if current_user and current_user.role in ('admin', 'superadmin') %}Cache Browser{% else %}Recent Validations{% endif %}
       </a>
       <a href="/analytics" class="{{ m_base }} {% if active == 'analytics' %}{{ m_on }}{% else %}{{ m_idle }}{% endif %}">
         <svg class="w-4 h-4"><use href="#i-chart"/></svg>Analytics

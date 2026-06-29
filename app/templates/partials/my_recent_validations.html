@@ -1,0 +1,43 @@
+{% if rows %}
+<div class="overflow-x-auto">
+  <table class="min-w-full text-sm">
+    <thead class="bg-gray-50 dark:bg-gray-800/50 text-left text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+      <tr>
+        <th class="px-4 py-2 font-medium">Email</th>
+        <th class="px-4 py-2 font-medium">Verdict</th>
+        <th class="px-4 py-2 font-medium">Validated</th>
+        <th class="px-4 py-2 font-medium">From job</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+      {% for r in rows %}
+      <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+        <td class="px-4 py-2 font-mono text-xs text-gray-700 dark:text-gray-300">{{ r.email }}</td>
+        <td class="px-4 py-2">
+          {% set v = r.verdict %}
+          {% if v == 'valid' %}
+            <span class="inline-block rounded-full bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-medium px-2 py-0.5">valid</span>
+          {% elif v == 'invalid' %}
+            <span class="inline-block rounded-full bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 text-xs font-medium px-2 py-0.5">invalid</span>
+          {% elif v == 'risky' %}
+            <span class="inline-block rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 text-xs font-medium px-2 py-0.5">risky</span>
+          {% else %}
+            <span class="inline-block rounded-full bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 text-xs font-medium px-2 py-0.5">{{ v }}</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">{{ r.created_at | ist }}</td>
+        <td class="px-4 py-2 text-xs">
+          <a href="/jobs/{{ r.job_id }}" class="text-indigo-600 hover:underline">
+            {{ r.job_filename or ('job ' ~ r.job_id) }}
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+  No bulk validations yet. Upload a CSV from the <a href="/" class="text-indigo-600 hover:underline">dashboard</a> to see results here.
+</div>
+{% endif %}
