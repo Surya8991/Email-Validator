@@ -99,6 +99,10 @@
       <div><dt class="text-xs uppercase tracking-wide text-gray-500">Total processed</dt><dd id="out-total" class="text-lg font-semibold"></dd></div>
     </dl>
     <div class="flex flex-wrap gap-3">
+      <button id="btn-dl-verified"
+        class="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+        ⬇ Verified only <span id="verified-count" class="text-xs opacity-80"></span>
+      </button>
       <button id="btn-dl-kept"
         class="inline-flex items-center gap-2 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-sm font-medium px-4 py-2 rounded-lg">
         ⬇ Cleaned CSV (kept rows)
@@ -296,6 +300,7 @@
     const col = state.emailCol;
     state.kept = [];
     state.dropped = [];
+    state.verifiedOnly = [];
     for (const row of state.rows) {
       const em = (row[col] || "").trim().toLowerCase();
       const v = em ? state.verdicts.get(em) : null;
@@ -304,10 +309,17 @@
       } else {
         state.kept.push(row);
       }
+      // Strict "verified only" — must have a cache entry with verdict='valid'.
+      // Drops risky/catch-all AND not-in-cache rows.
+      if (v && v.verdict === "valid") {
+        state.verifiedOnly.push(row);
+      }
     }
     $("out-kept").textContent = state.kept.length.toLocaleString();
     $("out-dropped").textContent = state.dropped.length.toLocaleString();
     $("out-total").textContent = state.rows.length.toLocaleString();
+    const vc = document.getElementById("verified-count");
+    if (vc) vc.textContent = `(${state.verifiedOnly.length.toLocaleString()})`;
     show("step-exports");
     document.getElementById("step-exports").scrollIntoView({ behavior: "smooth" });
   });
@@ -329,6 +341,16 @@
     const f = state.filename || "account_info.csv";
     return f.replace(/\.csv$/i, "");
   }
+
+  $("btn-dl-verified").addEventListener("click", () => {
+    const list = state.verifiedOnly || [];
+    if (list.length === 0) {
+      alert("No verified (cache verdict = 'valid') rows in this file.");
+      return;
+    }
+    const rows = list.map((r) => state.headers.map((h) => r[h] ?? ""));
+    downloadCSV(`${baseName()}.verified.csv`, state.headers, rows);
+  });
 
   $("btn-dl-kept").addEventListener("click", () => {
     const rows = state.kept.map((r) => state.headers.map((h) => r[h] ?? ""));
