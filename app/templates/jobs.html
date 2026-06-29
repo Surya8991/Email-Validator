@@ -21,15 +21,41 @@
     </div>
   </div>
 
+  {% set is_admin_user = current_user and current_user.role in ('admin', 'superadmin') %}
+
+  <!-- Filter bar -->
+  <form method="get" action="/jobs" class="card p-4 flex items-center gap-2 flex-wrap">
+    <select name="status" class="input-base text-sm">
+      <option value="" {% if not status_filter %}selected{% endif %}>All statuses</option>
+      <option value="queued" {% if status_filter == 'queued' %}selected{% endif %}>Queued</option>
+      <option value="running" {% if status_filter == 'running' %}selected{% endif %}>Running</option>
+      <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+      <option value="failed" {% if status_filter == 'failed' %}selected{% endif %}>Failed</option>
+    </select>
+    {% if is_admin_user %}
+    <input type="text" name="owner" value="{{ owner_filter }}" placeholder="Filter by owner email…"
+      class="input-base text-sm flex-1 max-w-xs"/>
+    {% endif %}
+    <button type="submit" class="btn-primary">Filter</button>
+    {% if status_filter or owner_filter %}
+    <a href="/jobs" class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition">Clear</a>
+    {% endif %}
+  </form>
+
   {% if not jobs %}
   <div class="card p-10 text-center">
-    <p class="text-gray-400 text-sm">No bulk jobs yet.</p>
+    <p class="text-gray-400 text-sm">
+      {% if status_filter or owner_filter %}No jobs match the filter.{% else %}No bulk jobs yet.{% endif %}
+    </p>
+    {% if not status_filter and not owner_filter %}
     <a href="/validate" class="text-indigo-500 hover:underline text-sm mt-2 inline-block">Upload a CSV →</a>
+    {% endif %}
   </div>
   {% else %}
   {% set live = jobs | selectattr('status', 'in', ['queued', 'running']) | list | length %}
-  <div class="card overflow-hidden"
-    {% if live %}hx-get="/jobs" hx-trigger="every 5s" hx-select=".card" hx-swap="outerHTML"{% endif %}>
+  {% set refresh_url = '/jobs' + ('?status=' + status_filter if status_filter else '') + ('&owner=' + owner_filter if status_filter and owner_filter else ('?owner=' + owner_filter if owner_filter else '')) %}
+  <div id="jobs-table-card" class="card overflow-hidden"
+    {% if live %}hx-get="{{ refresh_url }}" hx-trigger="every 5s" hx-select="#jobs-table-card" hx-swap="outerHTML"{% endif %}>
     {% if live %}
     <div class="px-4 py-2 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-100 dark:border-blue-900 text-xs text-blue-700 dark:text-blue-300">
       <span class="inline-flex items-center gap-1.5">

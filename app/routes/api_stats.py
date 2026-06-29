@@ -91,14 +91,24 @@ def purge_cache(current_user: User = Depends(require_auth)):
     return {"purged": count}
 
 
+_VALID_EXPORT_VERDICTS = {"valid", "invalid", "risky"}
+
+
 @router.get("/api/cache/export")
-def export_cache(q: str = "", current_user: User = Depends(require_auth)):
-    """Stream the cache table as CSV. Honors the same `q` search filter as the browser."""
+def export_cache(
+    q: str = "",
+    verdict: str = "",
+    current_user: User = Depends(require_auth),
+):
+    """Stream the cache table as CSV. Honors the same `q` + `verdict` filters as the browser."""
     _require_admin_cache(current_user)
+    verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_EXPORT_VERDICTS else ""
     with Session(engine) as session:
         query = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
         if q:
             query = query.where(EmailCache.email.contains(q))
+        if verdict_q:
+            query = query.where(EmailCache.verdict == verdict_q)
         rows = session.exec(query).all()
 
     buf = io.StringIO()
