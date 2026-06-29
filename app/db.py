@@ -50,6 +50,15 @@ _PG_COLUMN_ADDS: list[tuple[str, str, str]] = [
 ]
 
 
+_PG_INDEX_ADDS: list[tuple[str, str]] = [
+    # Functional index that makes `WHERE LOWER(email) IN (...)` index-scan
+    # instead of full-scanning emailcache. The cache-lookup endpoint uses
+    # LOWER() to match legacy mixed-case rows; without this index the
+    # query times out on Vercel Hobby (10s) at 5k keys per call.
+    ("ix_emailcache_email_lower", "emailcache (LOWER(email))"),
+]
+
+
 def _apply_lightweight_migrations() -> None:
     if not is_postgres():
         return
@@ -58,6 +67,10 @@ def _apply_lightweight_migrations() -> None:
         for table, column, ddl in _PG_COLUMN_ADDS:
             conn.execute(text(
                 f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
+            ))
+        for name, target in _PG_INDEX_ADDS:
+            conn.execute(text(
+                f'CREATE INDEX IF NOT EXISTS {name} ON {target}'
             ))
 
 

@@ -524,23 +524,22 @@ async def admin_cache_lookup(
 ):
     """Batch cache verdict lookup for the Account Cleanup page.
 
-    Body: {"emails": ["a@x.com", ...]}   (capped at 1,000 per call)
+    Body: {"emails": ["a@x.com", ...]}   (capped at 5,000 per call)
     Resp: {"verdicts": {"a@x.com": {"verdict": "valid", "validated_at": ".."}, ...}}
 
     Only emails that exist in the cache are returned — absence in the
     response means "not in cache" and the browser treats those rows as
     keep-untouched per the cleanup policy.
 
-    The 1,000-key cap is because the WHERE clause uses LOWER(email) (to
-    catch legacy mixed-case rows), which can't use the unique index and
-    full-scans on a cold pool. 1k keeps each call under Vercel Hobby's
-    10s function ceiling.
+    The WHERE clause uses LOWER(email) to catch legacy mixed-case rows;
+    the functional index ix_emailcache_email_lower (created by db.py at
+    startup) keeps the query under Vercel Hobby's 10s ceiling.
     """
     emails = payload.get("emails") if isinstance(payload, dict) else None
     if not isinstance(emails, list):
         raise HTTPException(status_code=400, detail="`emails` must be a list")
-    if len(emails) > 1000:
-        raise HTTPException(status_code=400, detail="Max 1,000 emails per request")
+    if len(emails) > 5000:
+        raise HTTPException(status_code=400, detail="Max 5,000 emails per request")
 
     keys = list({
         e.strip().lower() for e in emails
