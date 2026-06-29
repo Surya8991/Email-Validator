@@ -6,7 +6,7 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.12** — cold-start 504 fix (DB ops moved out of Vercel lifespan into `db_init.yml`), nightly scheduled retry_unknowns, stale-job watchdog, pip-audit in CI, Dependabot. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 19.
+Current version: **0.13** — UI filters & pagination across the high-traffic list pages (`/jobs`, `/cache`, `/admin/audit-log`), audit-log count bug fixed. Prior in **0.12**: cold-start 504 fix (DB ops moved into `db_init.yml`), nightly retry_unknowns, stale-job watchdog, pip-audit, Dependabot. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 20.
 
 ---
 
@@ -159,4 +159,8 @@ CI runs all three (ruff, mypy, pytest, pip-audit) on every push and PR via `.git
 - Bulk jobs show a live **ETA** while running, plus a global HTMX progress bar for every in-flight request. Job list auto-refreshes while anything is queued or running.
 - Free-tier safe: `keep_warm.yml` (×3 redundant workflows) pings `/api/health` every 5 min so Neon doesn't auto-pause. DB ops (`create_db_tables`, admin bootstrap, team backfill) run via `db_init.yml` on push rather than in the Vercel lifespan — cold starts now take ~2s, well within Hobby's 10s limit.
 - **Stale job watchdog:** `stale_jobs.yml` runs hourly and marks any job stuck in `running` for >7h as `failed`, catching GitHub Actions runner kills that the workflow-callback missed.
+- **List page filters & pagination** (added in 0.13):
+  - `/jobs` — status (queued/running/done/failed) + owner-email filter (admin-only) + page-based pagination (50/page). Filter persists across the live 5s auto-refresh.
+  - `/cache` — verdict (valid/invalid/risky) filter next to the existing email search. Both flow into the CSV export query so the download matches the on-screen view.
+  - `/admin/audit-log` — actor-email + from/to date filters added on top of the existing action filter. Pagination preserves all four filters; total-count query was also fixed (previously ignored filters, making page math wrong).
 - **Read [PROJECT_LOG.md](PROJECT_LOG.md) before changing anything** — has the do-not-regress list, env-var table, and the Workflow Runbook for triaging Vercel + GHA failures.

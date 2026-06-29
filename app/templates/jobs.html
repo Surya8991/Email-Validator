@@ -5,7 +5,9 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Validation History</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Bulk jobs - last 50</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+        {% if total %}{{ total }} bulk job{{ 's' if total != 1 else '' }} — page {{ page }} of {{ pages }}{% else %}Bulk jobs{% endif %}
+      </p>
     </div>
     <div class="flex items-center gap-2">
       {% if jobs and current_user and current_user.role in ('admin', 'superadmin') %}
@@ -142,6 +144,30 @@
       </tbody>
     </table>
   </div>
+
+  {% if pages > 1 %}
+  {% set qs = (('status=' + status_filter) if status_filter else '') + (('&' if status_filter else '') + 'owner=' + owner_filter if owner_filter else '') %}
+  {% set base = '/jobs?' + qs + ('&' if qs else '') %}
+  <nav class="flex items-center justify-between px-1">
+    <div class="text-xs text-gray-500 dark:text-gray-400">
+      Showing {{ ((page - 1) * limit) + 1 }}–{{ [(page * limit), total] | min }} of {{ total }}
+    </div>
+    <div class="flex items-center gap-1">
+      {% if page > 1 %}
+      <a href="{{ base }}page={{ page - 1 }}" class="px-3 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">← Prev</a>
+      {% else %}
+      <span class="px-3 py-1.5 text-xs rounded border border-gray-100 dark:border-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed">← Prev</span>
+      {% endif %}
+      <span class="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400">{{ page }} / {{ pages }}</span>
+      {% if page < pages %}
+      <a href="{{ base }}page={{ page + 1 }}" class="px-3 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">Next →</a>
+      {% else %}
+      <span class="px-3 py-1.5 text-xs rounded border border-gray-100 dark:border-gray-800 text-gray-300 dark:text-gray-600 cursor-not-allowed">Next →</span>
+      {% endif %}
+    </div>
+  </nav>
+  {% endif %}
+
   {% endif %}
 </div>
 {% endblock %}

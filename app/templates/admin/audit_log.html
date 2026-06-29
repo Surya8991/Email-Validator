@@ -9,20 +9,35 @@
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Audit Log</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">All admin actions — {{ total }} total events</p>
     </div>
-    <a href="/admin/audit-log/export{% if action_filter %}?action_filter={{ action_filter }}{% endif %}"
+    {% set export_qs = [] %}
+    {% if action_filter %}{% set _ = export_qs.append('action_filter=' + action_filter) %}{% endif %}
+    {% if actor_filter %}{% set _ = export_qs.append('actor_filter=' + actor_filter) %}{% endif %}
+    {% if from_date %}{% set _ = export_qs.append('from_date=' + from_date) %}{% endif %}
+    {% if to_date %}{% set _ = export_qs.append('to_date=' + to_date) %}{% endif %}
+    <a href="/admin/audit-log/export{% if export_qs %}?{{ export_qs | join('&') }}{% endif %}"
       class="btn-ghost border border-gray-200 dark:border-gray-700 text-indigo-600 hover:text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30">
       ⬇ Export CSV
     </a>
   </div>
 
   <!-- Filter bar -->
-  <form method="get" action="/admin/audit-log" class="flex items-center gap-2 mb-5">
-    <input type="text" name="action_filter" value="{{ action_filter }}" placeholder="Filter by action (e.g. user.activate)…"
-      class="input-base flex-1 max-w-sm"/>
-    <button type="submit" class="btn-primary">Filter</button>
-    {% if action_filter %}
-    <a href="/admin/audit-log" class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition">Clear</a>
-    {% endif %}
+  <form method="get" action="/admin/audit-log" class="card p-4 mb-5">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+      <input type="text" name="action_filter" value="{{ action_filter }}" placeholder="Action contains (e.g. user.activate)…"
+        class="input-base text-sm"/>
+      <input type="text" name="actor_filter" value="{{ actor_filter }}" placeholder="Actor email contains…"
+        class="input-base text-sm"/>
+      <input type="date" name="from_date" value="{{ from_date }}" placeholder="From"
+        class="input-base text-sm" title="From date (inclusive)"/>
+      <input type="date" name="to_date" value="{{ to_date }}" placeholder="To"
+        class="input-base text-sm" title="To date (inclusive)"/>
+    </div>
+    <div class="flex items-center gap-2 mt-3">
+      <button type="submit" class="btn-primary">Filter</button>
+      {% if action_filter or actor_filter or from_date or to_date %}
+      <a href="/admin/audit-log" class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition">Clear all</a>
+      {% endif %}
+    </div>
   </form>
 
   <!-- Log table -->
@@ -85,15 +100,21 @@
 
   <!-- Pagination -->
   {% if pages > 1 %}
+  {% set filter_qs = [] %}
+  {% if action_filter %}{% set _ = filter_qs.append('action_filter=' + action_filter) %}{% endif %}
+  {% if actor_filter %}{% set _ = filter_qs.append('actor_filter=' + actor_filter) %}{% endif %}
+  {% if from_date %}{% set _ = filter_qs.append('from_date=' + from_date) %}{% endif %}
+  {% if to_date %}{% set _ = filter_qs.append('to_date=' + to_date) %}{% endif %}
+  {% set filter_qs_str = ('&' + (filter_qs | join('&'))) if filter_qs else '' %}
   <div class="flex items-center justify-between mt-4 text-sm">
-    <span class="text-gray-500 dark:text-gray-400 text-xs">Page {{ page }} of {{ pages }}</span>
+    <span class="text-gray-500 dark:text-gray-400 text-xs">Page {{ page }} of {{ pages }} — {{ total }} event{{ 's' if total != 1 else '' }}</span>
     <div class="flex gap-2">
       {% if page > 1 %}
-      <a href="?page={{ page - 1 }}&action_filter={{ action_filter }}"
+      <a href="?page={{ page - 1 }}{{ filter_qs_str }}"
         class="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition">← Prev</a>
       {% endif %}
       {% if page < pages %}
-      <a href="?page={{ page + 1 }}&action_filter={{ action_filter }}"
+      <a href="?page={{ page + 1 }}{{ filter_qs_str }}"
         class="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition">Next →</a>
       {% endif %}
     </div>

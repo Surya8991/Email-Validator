@@ -928,23 +928,62 @@ async def admin_delete_team(team_id: int, current_user: User = Depends(require_a
 
 # ── A1: Audit Log ─────────────────────────────────────────────────────────────
 
+def _parse_iso_date(s: str) -> datetime | None:
+    """Parse YYYY-MM-DD from the HTML5 <input type=date> field. Returns None if blank/bad."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _apply_audit_filters(stmt, *, action_filter, actor_filter, from_dt, to_dt):
+    """Apply the four audit-log filters to a SELECT statement. Used by both
+    the page route and the CSV export so they always agree on what's shown."""
+    if action_filter:
+        stmt = stmt.where(AuditLog.action.contains(action_filter))
+    if actor_filter:
+        stmt = stmt.where(AuditLog.actor_email.contains(actor_filter))
+    if from_dt is not None:
+        stmt = stmt.where(AuditLog.created_at >= from_dt)
+    if to_dt is not None:
+        # Inclusive end date — include all events on `to_dt` itself.
+        stmt = stmt.where(AuditLog.created_at < to_dt + timedelta(days=1))
+    return stmt
+
+
 @router.get("/audit-log", response_class=HTMLResponse)
 async def admin_audit_log(
     request: Request,
     page: int = 1,
     action_filter: str = "",
+    actor_filter: str = "",
+    from_date: str = "",
+    to_date: str = "",
     current_user: User = Depends(require_admin),
 ):
     limit = 50
+    page = max(1, page)
     offset = (page - 1) * limit
+    from_dt = _parse_iso_date(from_date)
+    to_dt = _parse_iso_date(to_date)
     with Session(engine) as db:
-        q = select(AuditLog).order_by(AuditLog.created_at.desc())  # type: ignore[arg-type]
-        if action_filter:
-            q = q.where(AuditLog.action.contains(action_filter))
+        q = _apply_audit_filters(
+            select(AuditLog).order_by(AuditLog.created_at.desc()),  # type: ignore[arg-type]
+            action_filter=action_filter, actor_filter=actor_filter,
+            from_dt=from_dt, to_dt=to_dt,
+        )
         logs = db.exec(q.offset(offset).limit(limit)).all()
-        total = db.exec(
-            select(func.count()).select_from(AuditLog)
-        ).one() or 0
+        # FIX: previously the count query didn't apply filters, so paging was
+        # wrong as soon as any filter was set.
+        count_q = _apply_audit_filters(
+            select(func.count()).select_from(AuditLog),
+            action_filter=action_filter, actor_filter=actor_filter,
+            from_dt=from_dt, to_dt=to_dt,
+        )
+        total = db.exec(count_q).one() or 0
     return templates.TemplateResponse(request, "admin/audit_log.html", {
         **_admin_ctx("audit", current_user),
         "logs": logs,
@@ -952,6 +991,9 @@ async def admin_audit_log(
         "total": total,
         "pages": max(1, (total + limit - 1) // limit),
         "action_filter": action_filter,
+        "actor_filter": actor_filter,
+        "from_date": from_date,
+        "to_date": to_date,
         "limit": limit,
     })
 
@@ -959,13 +1001,20 @@ async def admin_audit_log(
 @router.get("/audit-log/export")
 async def admin_audit_log_export(
     action_filter: str = "",
+    actor_filter: str = "",
+    from_date: str = "",
+    to_date: str = "",
     current_user: User = Depends(require_admin),
 ):
-    """Export the audit log as CSV. Honors the same action filter as the browser."""
+    """Export the audit log as CSV. Honors the same filters as the browser."""
+    from_dt = _parse_iso_date(from_date)
+    to_dt = _parse_iso_date(to_date)
     with Session(engine) as db:
-        q = select(AuditLog).order_by(AuditLog.created_at.desc())  # type: ignore[arg-type]
-        if action_filter:
-            q = q.where(AuditLog.action.contains(action_filter))
+        q = _apply_audit_filters(
+            select(AuditLog).order_by(AuditLog.created_at.desc()),  # type: ignore[arg-type]
+            action_filter=action_filter, actor_filter=actor_filter,
+            from_dt=from_dt, to_dt=to_dt,
+        )
         logs = db.exec(q).all()
         # Snapshot to plain tuples BEFORE commit — commit expires ORM attributes.
         rows_data = [
@@ -981,7 +1030,8 @@ async def admin_audit_log_export(
         ]
         _log_audit(
             "audit.export", current_user, "audit_log", "",
-            f"action_filter={action_filter} rows={len(rows_data)}", db,
+            (f"action={action_filter} actor={actor_filter} "
+             f"from={from_date} to={to_date} rows={len(rows_data)}"), db,
         )
         db.commit()
 
