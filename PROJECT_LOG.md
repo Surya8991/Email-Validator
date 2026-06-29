@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 20). Current VERSION: **0.13**
+> Last updated: 2026-06-29 (Session 21). Current VERSION: **0.14**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -55,6 +55,36 @@
 - Pass bare integer inputs from a `schedule:`-triggered workflow to argparse `type=int` params — when `schedule:` fires, all `inputs.*` are empty strings. `argparse` rejects `--batch-size ""` with a type error. Always use `${{ inputs.foo || 'default' }}` fallbacks on every env var that feeds a numeric CLI flag (see `retry_unknowns.yml`).
 - Bring back SELECT-then-INSERT in `app/core/cache.py:set_cache`. Session 18 switched to `INSERT ... ON CONFLICT (email) DO UPDATE` because two parallel workers (or two tasks in the same asyncio.gather chunk hitting a duplicated CSV email) were racing on the SELECT-then-INSERT and tripping `ix_emailcache_email`, crashing the worker mid-write and losing the already-validated rows of that job. UPSERT is the only correct shape; preserve it on both Postgres (`postgresql.insert`) and SQLite (`sqlite.insert`) branches.
 - Render Job owner email in places that read `_JOB_LIST_COLS` without re-joining `User` — Session 18 added `Job.user_id` + `User.email` to the SELECT in `_list_jobs_lightweight`, `_dashboard_aggregates.recent`, and the `/jobs/{id}` query, but **not** to the 2-second poll partial `/jobs/{id}/status` (intentional — it's a hot path). If you add owner-email to a new surface, join `User` there too.
+
+---
+
+## Session 21 — 2026-06-29 — v0.14 filtered CSV exports everywhere
+
+Closed the export coverage gap. Every list page now has `⬇ Export CSV` that streams the current filtered view.
+
+**New endpoints** (each honors the same query params as its page so the CSV matches what's on screen):
+- `GET /jobs/export` (`app/routes/ui.py`) — `?status=` + `?owner=` (admin-only). Pulls ALL matching jobs, not paginated. Owner column included for compliance/billing reports.
+- `GET /admin/users/export` (`app/routes/admin.py`) — `?q=` + `?role_filter=` + `?status_filter=`. Columns: email, role, status, created_at, last_login, validation_limit, failed_login_count, locked_until. Writes an `users.export` AuditLog entry with filter params + row count.
+- `GET /admin/usage/export` (`app/routes/admin.py`) — per-user activity + provider call totals. Two CSV sections separated by `# section` rows so the file remains greppable by humans.
+
+**Pre-existing exports** that already shipped with filter support (no changes needed this session):
+- `/api/cache/export` — `?q=` + `?verdict=`
+- `/admin/audit-log/export` — `?action_filter=` + `?actor_filter=` + `?from_date=` + `?to_date=`
+- `/api/bulk/{job_id}/download` — `?verdict=`
+
+**Route ordering gotcha:** `/jobs/export` MUST be declared before `/jobs/{job_id}` in `ui.py`, otherwise FastAPI matches the path-param route first and tries to parse "export" as a job id. Verified order by `grep -n '@router.get("/jobs' app/routes/ui.py`.
+
+**Template additions:**
+- `app/templates/jobs.html` — Export CSV button next to "+ New Job", appends current `status_filter` + `owner_filter` query params via a small Jinja2 list-build.
+- `app/templates/admin/users.html` — Export CSV button next to Invite / Create, appends `q + role_filter + status_filter`.
+- `app/templates/admin/usage.html` — Export CSV button in the page header.
+
+**Smoke test:** `/openapi.json` confirms all 6 export endpoints registered (`/admin/audit-log/export`, `/admin/usage/export`, `/admin/users/export`, `/api/bulk/{job_id}/download`, `/api/cache/export`, `/jobs/export`). Ruff clean, imports OK on fastapi 0.138.
+
+**Intentionally NOT added** (not enough value vs effort):
+- `/admin/sessions/export` — sessions are ephemeral, table fits one screen.
+- `/admin/teams/export`, `/teams` export — bounded by # of teams; usually 3-10 rows.
+- `/dashboard` / `/admin/stats` — overview pages, not lists.
 
 ---
 
@@ -831,6 +861,7 @@ All provider tests use `respx.mock`. Any test that calls `httpx.AsyncClient.get/
 
 | Session | Date | Version | Key Work |
 |---|---|---|---|
+| 21 | 2026-06-29 | v0.14 | Filtered CSV exports on every list page (`/jobs`, `/admin/users`, `/admin/usage`) with audit logging on the admin-only ones. |
 | 20 | 2026-06-29 | v0.13 | List-page filters + pagination on `/jobs`, `/cache`, `/admin/audit-log`. Fixed audit-log total-count bug (page math was wrong when any filter was set). |
 | 19 | 2026-06-29 | v0.12 | Cold-start fix: DB ops out of Vercel lifespan → `db_init.yml` (push-triggered). pip-audit in CI, nightly retry_unknowns schedule, hourly stale-job watchdog, Dependabot. |
 | 1 | 2026-06-23 | v0.1.0 | Initial build — FastAPI scaffold, 5 providers, 4 strategies, SQLite+SQLModel, HTMX+Tailwind UI, bulk CSV pipeline, BackgroundTasks worker, Jinja2 templates, 16 tests passing |
@@ -1238,4 +1269,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-29 — Session 20 — v0.13_
+_Last updated: 2026-06-29 — Session 21 — v0.14_

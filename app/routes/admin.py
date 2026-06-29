@@ -257,6 +257,59 @@ async def admin_users(
     })
 
 
+@router.get("/users/export")
+def admin_users_export(
+    q: str = "",
+    role_filter: str = "",
+    status_filter: str = "",
+    current_user: User = Depends(require_admin),
+):
+    """Export the user table as CSV. Honors the same filters as the page."""
+    with Session(engine) as db:
+        query = select(User).order_by(User.created_at.desc())  # type: ignore[arg-type]
+        if q:
+            query = query.where(User.email.contains(q.strip().lower()))
+        if role_filter in ("user", "admin", "superadmin"):
+            query = query.where(User.role == role_filter)
+        if status_filter == "active":
+            query = query.where(User.is_active == True)  # noqa: E712
+        elif status_filter == "inactive":
+            query = query.where(User.is_active == False)  # noqa: E712
+        users = db.exec(query).all()
+        rows_data = [
+            (
+                u.email,
+                u.role,
+                "active" if u.is_active else "inactive",
+                u.created_at.isoformat() if u.created_at else "",
+                u.last_login.isoformat() if u.last_login else "",
+                u.validation_limit if u.validation_limit is not None else "",
+                u.failed_login_count,
+                u.locked_until.isoformat() if u.locked_until else "",
+            )
+            for u in users
+        ]
+        _log_audit(
+            "users.export", current_user, "users", "",
+            f"q={q} role={role_filter} status={status_filter} rows={len(rows_data)}", db,
+        )
+        db.commit()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "email", "role", "status", "created_at", "last_login",
+        "validation_limit", "failed_login_count", "locked_until",
+    ])
+    writer.writerows(rows_data)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="users-{stamp}.csv"'},
+    )
+
+
 @router.post("/users")
 async def admin_create_user(
     request: Request,
@@ -632,6 +685,49 @@ async def admin_usage(request: Request, current_user: User = Depends(require_adm
         "emails_processed": emails_processed,
         "provider_totals": provider_totals,
     })
+
+
+@router.get("/usage/export")
+def admin_usage_export(current_user: User = Depends(require_admin)):
+    """CSV of per-user activity + provider call totals (capacity-planning report)."""
+    with Session(engine) as db:
+        users = db.exec(select(User).order_by(User.email)).all()
+        rows_data: list[tuple] = []
+        for u in users:
+            if u.id is None:
+                continue
+            jobs_n = db.exec(
+                select(func.count()).select_from(Job).where(Job.user_id == u.id)
+            ).one() or 0
+            emails_n = db.exec(
+                select(func.sum(Job.processed)).where(Job.user_id == u.id)
+            ).one() or 0
+            rows_data.append((
+                u.email, u.role,
+                "active" if u.is_active else "inactive",
+                jobs_n, emails_n,
+                u.last_login.isoformat() if u.last_login else "",
+            ))
+        usage_rows = db.exec(
+            select(ApiUsage.provider, func.sum(ApiUsage.calls)).group_by(ApiUsage.provider)
+        ).all()
+        provider_totals = [(r[0], r[1]) for r in usage_rows]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["# section", "per_user_activity"])
+    writer.writerow(["email", "role", "status", "jobs", "emails_processed", "last_login"])
+    writer.writerows(rows_data)
+    writer.writerow([])
+    writer.writerow(["# section", "provider_totals"])
+    writer.writerow(["provider", "total_calls"])
+    writer.writerows(provider_totals)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="usage-{stamp}.csv"'},
+    )
 
 
 @router.get("/providers", response_class=HTMLResponse)

@@ -10,6 +10,13 @@
       </p>
     </div>
     <div class="flex items-center gap-2">
+      {% set export_qs = [] %}
+      {% if status_filter %}{% set _ = export_qs.append('status=' + status_filter) %}{% endif %}
+      {% if owner_filter %}{% set _ = export_qs.append('owner=' + owner_filter) %}{% endif %}
+      <a href="/jobs/export{% if export_qs %}?{{ export_qs | join('&') }}{% endif %}"
+        class="btn-ghost border border-gray-200 dark:border-gray-700 text-indigo-600 hover:text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30">
+        ⬇ Export CSV
+      </a>
       {% if jobs and current_user and current_user.role in ('admin', 'superadmin') %}
       <button
         hx-post="/api/bulk/clear"

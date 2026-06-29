@@ -6,7 +6,7 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.13** — UI filters & pagination across the high-traffic list pages (`/jobs`, `/cache`, `/admin/audit-log`), audit-log count bug fixed. Prior in **0.12**: cold-start 504 fix (DB ops moved into `db_init.yml`), nightly retry_unknowns, stale-job watchdog, pip-audit, Dependabot. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 20.
+Current version: **0.14** — Filtered CSV exports on every list page (`/jobs`, `/admin/users`, `/admin/usage`); existing `/cache` + `/admin/audit-log` exports already honored filters. Prior in **0.13**: filters & pagination across high-traffic pages + audit-log count bug fix. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 21.
 
 ---
 
@@ -163,4 +163,5 @@ CI runs all three (ruff, mypy, pytest, pip-audit) on every push and PR via `.git
   - `/jobs` — status (queued/running/done/failed) + owner-email filter (admin-only) + page-based pagination (50/page). Filter persists across the live 5s auto-refresh.
   - `/cache` — verdict (valid/invalid/risky) filter next to the existing email search. Both flow into the CSV export query so the download matches the on-screen view.
   - `/admin/audit-log` — actor-email + from/to date filters added on top of the existing action filter. Pagination preserves all four filters; total-count query was also fixed (previously ignored filters, making page math wrong).
+- **Filtered CSV exports** (added in 0.14) — every list page now has an `⬇ Export CSV` button that streams the current filtered view. Endpoints: `/jobs/export` (status+owner), `/admin/users/export` (q+role+status), `/admin/usage/export` (full per-user activity + provider totals), in addition to the existing `/api/cache/export` (q+verdict) and `/admin/audit-log/export` (action+actor+dates). Exports of admin-only tables are audit-logged.
 - **Read [PROJECT_LOG.md](PROJECT_LOG.md) before changing anything** — has the do-not-regress list, env-var table, and the Workflow Runbook for triaging Vercel + GHA failures.
