@@ -66,7 +66,9 @@ _DISPATCH_HINTS = {
 
 
 async def _trigger_github_actions(
-    job_id: int, cache_ttl_days: int | None = None,
+    job_id: int,
+    cache_ttl_days: int | None = None,
+    triggered_by: str | None = None,
 ) -> tuple[bool, str | None]:
     """Dispatch the bulk_process workflow. Returns (ok, error_for_ui)."""
     if not settings.github_pat:
@@ -81,6 +83,8 @@ async def _trigger_github_actions(
     inputs: dict[str, str] = {"job_id": str(job_id)}
     if cache_ttl_days is not None:
         inputs["cache_ttl_days"] = str(cache_ttl_days)
+    if triggered_by:
+        inputs["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.post(
@@ -185,7 +189,9 @@ async def create_bulk_job(
     # soon as the response is sent — FastAPI BackgroundTasks added at that
     # point do NOT reliably run. So we dispatch INLINE (a fast HTTP POST to
     # GitHub's API, typically <1s) before returning.
-    triggered, dispatch_error = await _trigger_github_actions(job_id, cache_ttl_days=ttl)
+    triggered, dispatch_error = await _trigger_github_actions(
+        job_id, cache_ttl_days=ttl, triggered_by=current_user.email,
+    )
     response_status = "queued"
     if not triggered:
         if os.getenv("VERCEL"):

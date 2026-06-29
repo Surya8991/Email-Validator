@@ -44,11 +44,14 @@ def _dashboard_aggregates() -> dict:
         # SELECT * across 5-50 rows fetched all of it and 504'd /jobs and /
         # on cold-Neon. Listing pages never read csv_data, only the worker does.
         recent_rows = session.execute(
-            select(*_JOB_LIST_COLS).order_by(Job.id.desc()).limit(5)  # type: ignore[arg-type]
+            select(*_JOB_LIST_COLS, Job.user_id, User.email)
+            .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
+            .order_by(Job.id.desc()).limit(5)
         ).all()
         recent = [
             {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
-             "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7]}
+             "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
+             "user_id": r[8], "user_email": r[9]}
             for r in recent_rows
         ]
     return {
@@ -327,11 +330,14 @@ def _list_jobs_lightweight() -> list[dict]:
     """Same column-projection pattern as the dashboard. Keeps csv_data on Neon."""
     with Session(engine) as session:
         rows = session.execute(
-            select(*_JOB_LIST_COLS).order_by(Job.id.desc()).limit(50)  # type: ignore[arg-type]
+            select(*_JOB_LIST_COLS, Job.user_id, User.email)
+            .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
+            .order_by(Job.id.desc()).limit(50)
         ).all()
     return [
         {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
-         "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7]}
+         "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
+         "user_id": r[8], "user_email": r[9]}
         for r in rows
     ]
 
@@ -358,7 +364,9 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
     with Session(engine) as session:
         # Same reason — never load Job.csv_data for the detail page either.
         row = session.execute(
-            select(*_JOB_LIST_COLS).where(Job.id == job_id)
+            select(*_JOB_LIST_COLS, Job.user_id, User.email)
+            .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
+            .where(Job.id == job_id)
         ).first()
         results = session.exec(
             select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
@@ -368,6 +376,7 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
     job = {
         "id": row[0], "status": row[1], "total": row[2], "processed": row[3],
         "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
+        "user_id": row[8], "user_email": row[9],
     }
     parsed = []
     for r in results:

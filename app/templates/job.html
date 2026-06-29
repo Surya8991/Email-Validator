@@ -14,6 +14,11 @@
     {% if job.filename %}
     <span class="text-xs text-gray-400 font-mono bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded">{{ job.filename }}</span>
     {% endif %}
+    {% if current_user and current_user.role in ('admin', 'superadmin') and job.user_email %}
+    <span class="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded" title="Owner">
+      👤 {{ job.user_email }}
+    </span>
+    {% endif %}
     {% if job.status != 'running' %}
     <button
       hx-delete="/api/bulk/{{ job.id }}"
