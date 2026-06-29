@@ -29,7 +29,10 @@ def fail_stale(hours: int) -> int:
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     with Session(engine) as db:
         rows = db.execute(
-            text("SELECT id, created_at FROM job WHERE status = 'running' AND created_at < :cutoff"),
+            text(
+                "SELECT id, created_at FROM job "
+                "WHERE status = 'running' AND created_at < :cutoff"
+            ),
             {"cutoff": cutoff},
         ).fetchall()
 
