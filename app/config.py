@@ -41,8 +41,18 @@ class Settings(BaseSettings):
     # Vercel Hobby=10s, Pro=60s. Default 10s is safe for both.
     httpx_timeout: float = 10.0
 
-    # Max emails per bulk CSV (0 = unlimited). Recommended: 50-100 on Vercel.
-    max_bulk_emails: int = 0
+    # Per-upload cap on emails in a single CSV (0 = unlimited).
+    # Default 1000 — past that the worker's 360-min runner cap starts
+    # to bite on per-email mode, and Bouncify rate limits start
+    # inflating the 'unknown' count.
+    max_bulk_emails: int = 1000
+    # Per-user concurrency caps. A new /api/bulk submission is rejected
+    # when the user already has either >= max_user_active_jobs jobs in
+    # status queued/running, OR the sum of `total` across those jobs
+    # would reach max_user_active_emails after adding the new one.
+    # 0 disables the respective check.
+    max_user_active_jobs: int = 4
+    max_user_active_emails: int = 2000
 
     # GitHub Actions bulk processing
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs

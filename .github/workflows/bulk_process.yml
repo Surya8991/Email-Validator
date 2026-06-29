@@ -23,6 +23,14 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    # Cap concurrent bulk runs at 3 by bucketing job_id into 3 groups —
+    # GitHub Actions only supports "1 per group", so 3 groups gives at most
+    # 3 in-flight runs; a 4th dispatched job lands in whichever bucket and
+    # waits for the run ahead of it. Accuracy degrades past ~3 parallel
+    # workers (Bouncify rate limits start producing 'unknown').
+    concurrency:
+      group: bulk-${{ fromJSON(inputs.job_id) % 3 }}
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v5

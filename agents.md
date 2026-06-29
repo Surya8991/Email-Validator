@@ -110,7 +110,10 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 ### Optional config
 - `CACHE_TTL_DAYS=30` — default result cache lifetime
 - `HTTPX_TIMEOUT=10.0` — keep ≤ 8 on Vercel Hobby
-- `MAX_BULK_EMAILS=0` — hard cap on CSV rows (0 = unlimited)
+- `MAX_BULK_EMAILS=1000` — hard cap on rows per single CSV upload (0 = unlimited). Bigger files get a 400 with "exceeds N email limit per upload".
+- `MAX_USER_ACTIVE_JOBS=4` — max queued+running bulk jobs a single user can have in flight (0 = unlimited). Excess uploads get a 429.
+- `MAX_USER_ACTIVE_EMAILS=2000` — max sum of pending emails across a user's queued+running jobs (0 = unlimited). A new upload that would push the user over the cap gets a 429.
+- The bulk_process workflow caps concurrent runs at 3 via a `concurrency: bulk-${{ job_id % 3 }}` group, so a 4th dispatched job queues at GitHub-Actions level until one of the 3 finishes. Accuracy degrades past ~3 parallel workers (Bouncify rate limits start producing 'unknown').
 - `ENABLE_SMTP_PROBE=false` — SMTP RCPT TO probe (port 25 often blocked)
 - `SMTP_PROBE_FROM` — FROM address for SMTP probes
 - `*_DAILY_CAP` — per-provider daily quota cap (0 = unlimited)

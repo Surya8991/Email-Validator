@@ -169,8 +169,34 @@ async def create_bulk_job(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"File exceeds {settings.max_bulk_emails} email limit. "
-                "Reduce the size or raise MAX_BULK_EMAILS."
+                f"File exceeds {settings.max_bulk_emails} email limit per upload."
+            ),
+        )
+
+    # Per-user concurrency caps: avoid one user saturating the 3-slot
+    # GitHub Actions queue and starving everyone else.
+    with Session(engine) as session:
+        active_jobs, active_emails = session.execute(text(
+            "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM job "
+            "WHERE user_id = :uid AND status IN ('queued', 'running')"
+        ), {"uid": current_user.id}).first() or (0, 0)
+    if settings.max_user_active_jobs > 0 and active_jobs >= settings.max_user_active_jobs:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"You already have {active_jobs} jobs queued or running "
+                f"(limit: {settings.max_user_active_jobs}). Wait for one to finish."
+            ),
+        )
+    if (
+        settings.max_user_active_emails > 0
+        and active_emails + row_count > settings.max_user_active_emails
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Adding this job would put you over {settings.max_user_active_emails} "
+                f"pending emails ({active_emails} already in flight). Wait for one to finish."
             ),
         )
 
@@ -188,6 +214,10 @@ async def create_bulk_job(
             providers=providers,
             filename=file.filename,
             csv_data=csv_str,
+            # Stamp total at upload time so the per-user-emails cap is
+            # accurate immediately — the worker re-confirms this number
+            # once it parses the CSV itself.
+            total=row_count,
         )
         session.add(job)
         session.commit()
