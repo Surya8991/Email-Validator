@@ -23,13 +23,21 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Cap concurrent bulk runs at 3 by bucketing job_id into 3 groups —
-    # GitHub Actions only supports "1 per group", so 3 groups gives at most
-    # 3 in-flight runs; a 4th dispatched job lands in whichever bucket and
-    # waits for the run ahead of it. Accuracy degrades past ~3 parallel
-    # workers (Bouncify rate limits start producing 'unknown').
+    # Cap concurrent bulk runs at 3 by bucketing job_id's last digit into
+    # 3 groups — GHA expression syntax has no `%` operator, so partition
+    # the 10 trailing digits across {a,b,c} with endsWith(). A 4th
+    # dispatched job lands in whichever bucket and waits for the run
+    # ahead of it. Accuracy degrades past ~3 parallel workers (Bouncify
+    # rate limits start producing 'unknown').
     concurrency:
-      group: bulk-${{ fromJSON(inputs.job_id) % 3 }}
+      group: >-
+        bulk-${{
+          (endsWith(inputs.job_id, '0') || endsWith(inputs.job_id, '3') ||
+           endsWith(inputs.job_id, '6') || endsWith(inputs.job_id, '9')) && 'a'
+          || (endsWith(inputs.job_id, '1') || endsWith(inputs.job_id, '4') ||
+              endsWith(inputs.job_id, '7')) && 'b'
+          || 'c'
+        }}
       cancel-in-progress: false
 
     steps:
