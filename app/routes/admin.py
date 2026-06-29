@@ -447,20 +447,30 @@ async def admin_revoke_invite(
 @router.post("/retry-unknowns")
 async def admin_retry_unknowns(
     batch_size: int = 500,
-    max_batches: int = 0,
+    max_batches: int = 1,
     since_days: int = 0,
     providers: str = "bouncify",
     strategy: str = "bouncify_only",
     job_id: int | None = None,
     strikes: int = 3,
+    num_buckets: int = 15,
     current_user: User = Depends(require_admin),
 ):
-    """Dispatch the retry_unknowns workflow. Args accepted as query params
-    or form data so the htmx button can fire with no body at all.
+    """Fan out the retry_unknowns workflow across N parallel runs.
 
-    Returns 502 with the GitHub API error if dispatch fails so the UI can
-    surface it instead of silently no-op'ing. Returns 503 when GITHUB_PAT
-    is not configured (e.g. local dev with no GitHub creds).
+    Each dispatch processes exactly one hash bucket (bucket=K of=N), so
+    the same email always lands in the same bucket — zero double-work
+    across parallel runs even as rows resolve.
+
+    GHA's 3-bucket concurrency group on the workflow caps in-flight at 3;
+    the remaining N-3 wait in GitHub's own queue and dequeue as runs
+    finish. With num_buckets=15 and ~500 emails per bucket, one click
+    covers ~7,500 emails at ~3× the throughput of the old single-run
+    sweep.
+
+    Returns 502 with the GitHub API error of the FIRST failed dispatch
+    (subsequent ones aren't attempted) so the UI can surface it. 503
+    when GITHUB_PAT is not configured.
     """
     import httpx as _httpx
 
@@ -469,16 +479,11 @@ async def admin_retry_unknowns(
             status_code=503,
             detail="GITHUB_PAT / GITHUB_REPO not configured — can't dispatch the workflow.",
         )
-    inputs: dict[str, str] = {
-        "batch_size": str(batch_size),
-        "max_batches": str(max_batches),
-        "since_days": str(since_days),
-        "providers": providers,
-        "strategy": strategy,
-        "strikes": str(strikes),
-    }
-    if job_id:
-        inputs["job_id"] = str(job_id)
+    if num_buckets < 1 or num_buckets > 20:
+        raise HTTPException(
+            status_code=400,
+            detail="num_buckets must be between 1 and 20 (per-click cap).",
+        )
 
     try:
         owner, repo = settings.github_repo.split("/", 1)
@@ -491,22 +496,50 @@ async def admin_retry_unknowns(
         f"https://api.github.com/repos/{owner}/{repo}/"
         "actions/workflows/retry_unknowns.yml/dispatches"
     )
-    async with _httpx.AsyncClient(timeout=4.0) as client:
-        resp = await client.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {settings.github_pat}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            json={"ref": "main", "inputs": inputs},
-        )
-    if resp.status_code != 204:
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub dispatch failed ({resp.status_code}): {resp.text[:200]}",
-        )
-    return {"ok": True, "dispatched": True, "inputs": inputs}
+
+    base_inputs: dict[str, str] = {
+        "batch_size": str(batch_size),
+        "max_batches": str(max_batches),
+        "since_days": str(since_days),
+        "providers": providers,
+        "strategy": strategy,
+        "strikes": str(strikes),
+        "bucket_of": str(num_buckets),
+    }
+    if job_id:
+        base_inputs["job_id"] = str(job_id)
+
+    dispatched: list[int] = []
+    async with _httpx.AsyncClient(timeout=8.0) as client:
+        for bucket in range(num_buckets):
+            inputs = dict(base_inputs, bucket=str(bucket))
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {settings.github_pat}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                json={"ref": "main", "inputs": inputs},
+            )
+            if resp.status_code != 204:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Dispatch {bucket}/{num_buckets} failed ({resp.status_code}): "
+                        f"{resp.text[:200]}. {len(dispatched)} earlier dispatches did succeed."
+                    ),
+                )
+            dispatched.append(bucket)
+
+    return {
+        "ok": True,
+        "dispatched": len(dispatched),
+        "buckets": dispatched,
+        "in_flight_cap": 3,
+        "queued": max(0, len(dispatched) - 3),
+        "approx_emails": len(dispatched) * batch_size,
+    }
 
 
 @router.get("/account-cleanup", response_class=HTMLResponse)

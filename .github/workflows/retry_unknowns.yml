@@ -1,5 +1,5 @@
 name: Retry Unknown Verdicts
-run-name: "Retry unknowns — batch ${{ inputs.batch_size }}${{ inputs.job_id && format(' (job #{0})', inputs.job_id) || '' }}"
+run-name: "Retry unknowns — bucket ${{ inputs.bucket || 0 }}/${{ inputs.bucket_of || 1 }} (batch ${{ inputs.batch_size }})${{ inputs.job_id && format(' job#{0}', inputs.job_id) || '' }}"
 
 on:
   workflow_dispatch:
@@ -39,22 +39,34 @@ on:
         required: false
         type: string
         default: "3"
+      bucket:
+        description: "Hash-bucket index this run processes, 0-based (default: 0)"
+        required: false
+        type: string
+        default: "0"
+      bucket_of:
+        description: "Total number of hash buckets (default: 1 = no bucketing)"
+        required: false
+        type: string
+        default: "1"
 
 jobs:
   retry:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Same 3-bucket concurrency scheme as bulk_process — see the comment
-    # there for why endsWith() instead of modulo. Bucket key is the
-    # current second-of-day truncated to its last digit; spreads back-to-
-    # back manual dispatches across the 3 groups.
+    # Same 3-bucket concurrency scheme as bulk_process — GHA expression
+    # syntax has no `%` operator, so partition `bucket` across {a,b,c}
+    # with endsWith() on its last digit. Fan-out admin dispatches send
+    # bucket=0,1,2,...,14 — each distinct bucket lands in one of the
+    # 3 GHA queues, so at most 3 retry runs execute at once and the
+    # remaining 12 wait in the queue.
     concurrency:
       group: >-
         bulk-retry-${{
-          (endsWith(github.run_id, '0') || endsWith(github.run_id, '3') ||
-           endsWith(github.run_id, '6') || endsWith(github.run_id, '9')) && 'a'
-          || (endsWith(github.run_id, '1') || endsWith(github.run_id, '4') ||
-              endsWith(github.run_id, '7')) && 'b'
+          (endsWith(inputs.bucket, '0') || endsWith(inputs.bucket, '3') ||
+           endsWith(inputs.bucket, '6') || endsWith(inputs.bucket, '9')) && 'a'
+          || (endsWith(inputs.bucket, '1') || endsWith(inputs.bucket, '4') ||
+              endsWith(inputs.bucket, '7')) && 'b'
           || 'c'
         }}
       cancel-in-progress: false
@@ -78,6 +90,12 @@ jobs:
           if [ -n "$JOB_ID" ]; then
             ARGS+=(--job-id "$JOB_ID")
           fi
+          # Only pass bucket flags when fan-out is actually in use
+          # (bucket_of > 1). Single-shot manual dispatches default to
+          # bucket=0 of=1 which leaves the SELECT unbucketed.
+          if [ "$BUCKET_OF" -gt 1 ] 2>/dev/null; then
+            ARGS+=(--bucket "$BUCKET" --bucket-of "$BUCKET_OF")
+          fi
           python scripts/retry_unknowns.py "${ARGS[@]}"
         env:
           BATCH_SIZE: ${{ inputs.batch_size }}
@@ -85,6 +103,8 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
           SINCE_DAYS: ${{ inputs.since_days }}
           STRIKES: ${{ inputs.strikes }}
+          BUCKET: ${{ inputs.bucket }}
+          BUCKET_OF: ${{ inputs.bucket_of }}
           PROVIDERS: ${{ inputs.providers }}
           STRATEGY: ${{ inputs.strategy }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

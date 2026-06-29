@@ -70,6 +70,8 @@ def _unknown_emails(
     job_id: int | None,
     since: datetime | None,
     strikes: int,
+    bucket: int | None = None,
+    bucket_of: int | None = None,
     exclude: set[str] | None = None,
 ) -> list[str]:
     # `retry_count < strikes` skips emails that have already burned through
@@ -84,6 +86,15 @@ def _unknown_emails(
     if since is not None:
         clauses.append("created_at >= :since")
         params["since"] = since
+    # Hash-bucket partition for the fan-out path — each parallel workflow
+    # processes one bucket. Postgres's HASHTEXT is stable + well-distributed;
+    # same email → same bucket every dispatch, so zero double-processing
+    # across parallel runs. SQLite (test path) doesn't have HASHTEXT, so
+    # the bucket filter is skipped there.
+    if bucket is not None and bucket_of and bucket_of > 1 and _is_postgres():
+        clauses.append("MOD(ABS(HASHTEXT(LOWER(email))), :bucket_of) = :bucket")
+        params["bucket"] = bucket
+        params["bucket_of"] = bucket_of
     if exclude:
         # Bind as a tuple expanded via SQLAlchemy's expanding param so the
         # set can be tens of thousands of emails without one big string.
@@ -101,6 +112,10 @@ def _unknown_emails(
         f"ORDER BY email LIMIT :limit"
     )
     return [r[0] for r in session.execute(text(sql), params).fetchall() if r[0]]
+
+
+def _is_postgres() -> bool:
+    return engine.dialect.name == "postgresql"
 
 
 def _update_rows(
@@ -268,16 +283,23 @@ async def run(args: argparse.Namespace) -> int:
                     job_id=args.job_id,
                     since=since,
                     strikes=args.strikes,
+                    bucket=args.bucket,
+                    bucket_of=args.bucket_of,
                     exclude=attempted,
                 )
             if not emails:
                 print("No unknown emails left to retry.", flush=True)
                 break
             attempted.update(emails)
+            bucket_tag = (
+                f" | bucket={args.bucket}/{args.bucket_of}"
+                if args.bucket is not None and args.bucket_of else ""
+            )
             print(
                 f"[batch {batch_no}] {len(emails)} unknowns | "
                 f"providers={providers} | strategy={strategy} | "
-                f"strikes={args.strikes} | attempted-so-far={len(attempted)}",
+                f"strikes={args.strikes}{bucket_tag} | "
+                f"attempted-so-far={len(attempted)}",
                 flush=True,
             )
             stats = await _process_batch(
@@ -335,6 +357,13 @@ def _parse_args() -> argparse.Namespace:
                    help="After this many failed retries an email's verdict flips "
                         "from 'unknown' to 'invalid' so it leaves the retry pool "
                         "(default: 3, env: UNKNOWN_STRIKES).")
+    p.add_argument("--bucket", type=int, default=None,
+                   help="Hash-bucket index this run processes (0-based). Combined "
+                        "with --bucket-of to fan a single retry sweep across N "
+                        "parallel workflow runs.")
+    p.add_argument("--bucket-of", type=int, default=None,
+                   help="Total number of hash buckets. Postgres only — SQLite skips "
+                        "the filter and processes all unknowns.")
     return p.parse_args()
 
 

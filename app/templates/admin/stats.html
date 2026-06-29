@@ -85,26 +85,33 @@
           id="retry-unknowns-btn"
           onclick="retryUnknowns(this)"
           class="w-full text-xs font-medium px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50 disabled:cursor-not-allowed">
-          ↻ Retry up to 10,000 of {{ verdict_counts.get('unknown', 0) }} unknowns
+          ↻ Retry up to 7,500 of {{ verdict_counts.get('unknown', 0) }} unknowns (15 parallel buckets)
         </button>
         <script>
           async function retryUnknowns(btn) {
             const ok = confirm(
-              "Dispatch retry_unknowns? Up to 20 batches × 500 = 10,000 emails this run. " +
+              "Fan out retry_unknowns across 15 parallel workflow runs " +
+              "(3 in flight, 12 queued; ~500 emails each → ~7,500 total). " +
               "Bouncify credit per email — confirm?"
             );
             if (!ok) return;
             const original = btn.textContent;
             btn.disabled = true;
-            btn.textContent = "Dispatching…";
+            btn.textContent = "Dispatching 15…";
             try {
               const resp = await fetch(
-                "/admin/retry-unknowns?batch_size=500&max_batches=20",
+                "/admin/retry-unknowns?batch_size=500&max_batches=1&num_buckets=15",
                 { method: "POST", credentials: "same-origin" }
               );
               const text = await resp.text();
               if (resp.ok) {
-                alert("Retry workflow dispatched. Watch GitHub Actions for progress.");
+                const data = JSON.parse(text);
+                alert(
+                  `Dispatched ${data.dispatched} workflow runs (buckets 0–${data.dispatched - 1}). ` +
+                  `${data.in_flight_cap} running, ${data.queued} queued. ` +
+                  `Covering ~${data.approx_emails.toLocaleString()} emails. ` +
+                  `Watch GitHub Actions for progress.`
+                );
               } else {
                 alert("Dispatch failed (" + resp.status + "): " + text.slice(0, 400));
               }
