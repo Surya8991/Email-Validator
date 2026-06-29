@@ -3,7 +3,12 @@ run-name: "Retry unknowns — bucket ${{ inputs.bucket || 0 }}/${{ inputs.bucket
 
 on:
   schedule:
-    - cron: "0 3 * * *"  # 3 AM daily — retry all unknowns with defaults
+    # Hourly, 03:00–23:00 UTC. The 3-bucket concurrency group below means
+    # at most 1 scheduled retry runs at a time (schedule fires land in
+    # bucket 0 → group 'a'); subsequent hourly fires queue rather than
+    # overlap. Combined with the 3-strikes rule this drains the unknown
+    # pool fast — each email gets ≤3 retries before flipping to invalid.
+    - cron: "0 3-23 * * *"
   workflow_dispatch:
     inputs:
       batch_size:
