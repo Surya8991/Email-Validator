@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-progress CI runs when a new push lands on the same ref. Avoids
+# burning two parallel runs (and double GHA minutes) on a quick fixup push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint-typecheck-test:
     runs-on: ubuntu-latest

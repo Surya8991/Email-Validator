@@ -1,0 +1,50 @@
+name: DB Backup
+
+# Weekly pg_dump of Neon DB to a GitHub Actions artifact. Neon free tier
+# has NO point-in-time recovery — if the DB is wiped (bad migration,
+# accidental DROP, runaway DELETE), there is nothing to restore from
+# without this. Artifacts are kept 90 days free.
+#
+# Restore (locally): unzip, then
+#   psql "$DATABASE_URL" < email_validator-YYYY-MM-DD.sql
+#
+# Required secret: DATABASE_URL
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"  # Sundays 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install Postgres client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Dump database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret is not set."
+            exit 1
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+          OUT="email_validator-${DATE}.sql"
+          echo "Dumping to $OUT …"
+          pg_dump --no-owner --no-privileges --clean --if-exists \
+                  "$DATABASE_URL" > "$OUT"
+          ls -lh "$OUT"
+          echo "DUMP_FILE=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: ${{ env.DUMP_FILE }}
+          retention-days: 90
+          compression-level: 9
