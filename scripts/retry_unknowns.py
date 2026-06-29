@@ -61,6 +61,7 @@ def _unknown_emails(
     *,
     job_id: int | None,
     since: datetime | None,
+    exclude: set[str] | None = None,
 ) -> list[str]:
     clauses = ["verdict = 'unknown'"]
     params: dict = {"limit": batch_size}
@@ -70,6 +71,17 @@ def _unknown_emails(
     if since is not None:
         clauses.append("created_at >= :since")
         params["since"] = since
+    if exclude:
+        # Bind as a tuple expanded via SQLAlchemy's expanding param so the
+        # set can be tens of thousands of emails without one big string.
+        from sqlalchemy import bindparam
+
+        stmt = text(
+            f"SELECT DISTINCT email FROM emailresult WHERE {' AND '.join(clauses)} "
+            f"AND email NOT IN :excl ORDER BY email LIMIT :limit"
+        ).bindparams(bindparam("excl", expanding=True))
+        params["excl"] = list(exclude)
+        return [r[0] for r in session.execute(stmt, params).fetchall() if r[0]]
     where = " AND ".join(clauses)
     sql = (
         f"SELECT DISTINCT email FROM emailresult WHERE {where} "
@@ -162,18 +174,29 @@ async def run(args: argparse.Namespace) -> int:
     )
 
     total = {"resolved": 0, "still_unknown": 0, "rows_updated": 0, "errors": 0, "batches": 0}
+    # Without this, a batch whose every email comes back 'unknown' again
+    # (Bouncify still timing out on them) would refetch the same 500 next
+    # round — ORDER BY email LIMIT 500 doesn't move on. Exclude
+    # already-attempted emails from subsequent queries this run.
+    attempted: set[str] = set()
     try:
-        for batch_no in range(1, args.max_batches + 1 if args.max_batches else 10_000):
+        for batch_no in range(1, (args.max_batches or 10_000) + 1):
             with Session(engine) as session:
                 emails = _unknown_emails(
-                    session, args.batch_size, job_id=args.job_id, since=since,
+                    session,
+                    args.batch_size,
+                    job_id=args.job_id,
+                    since=since,
+                    exclude=attempted,
                 )
             if not emails:
                 print("No unknown emails left to retry.", flush=True)
                 break
+            attempted.update(emails)
             print(
                 f"[batch {batch_no}] {len(emails)} unknowns | "
-                f"providers={providers} | strategy={strategy}",
+                f"providers={providers} | strategy={strategy} | "
+                f"attempted-so-far={len(attempted)}",
                 flush=True,
             )
             stats = await _process_batch(
@@ -182,6 +205,16 @@ async def run(args: argparse.Namespace) -> int:
             total["batches"] += 1
             for k in ("resolved", "still_unknown", "rows_updated", "errors"):
                 total[k] += stats[k]
+            # Safety net for total bouncify outage: if a whole batch
+            # produced zero resolutions, the provider is no help right
+            # now — stop burning credits.
+            all_still_unknown = stats["still_unknown"] == len(emails)
+            if stats["resolved"] == 0 and stats["errors"] == 0 and all_still_unknown:
+                print(
+                    "  → 0 resolved this batch — provider not helping, stopping early.",
+                    flush=True,
+                )
+                break
             print(
                 f"  → resolved={stats['resolved']} "
                 f"still_unknown={stats['still_unknown']} "
