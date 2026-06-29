@@ -35,20 +35,45 @@
 
   <div id="purge-result"></div>
 
-  <!-- Search -->
-  <div class="card p-4">
+  <!-- Search + verdict filter -->
+  <div class="card p-4 flex items-center gap-2 flex-wrap">
     <input
       type="search"
       name="q"
       placeholder="Search by email address…"
-      class="input-base w-full"
+      class="input-base flex-1 min-w-64"
       hx-get="/partials/cache-table"
       hx-trigger="input changed delay:300ms, search"
       hx-target="#cache-table"
       hx-swap="innerHTML"
-      hx-include="[name='q']"
-      oninput="document.getElementById('export-cache-link').href = '/api/cache/export' + (this.value ? '?q=' + encodeURIComponent(this.value) : '')"
+      hx-include="[name='q'], [name='verdict']"
+      oninput="updateExportLink()"
     />
+    <select
+      name="verdict"
+      class="input-base text-sm"
+      hx-get="/partials/cache-table"
+      hx-trigger="change"
+      hx-target="#cache-table"
+      hx-swap="innerHTML"
+      hx-include="[name='q'], [name='verdict']"
+      onchange="updateExportLink()">
+      <option value="">All verdicts</option>
+      <option value="valid">Valid</option>
+      <option value="invalid">Invalid</option>
+      <option value="risky">Risky</option>
+    </select>
+    <script>
+      function updateExportLink() {
+        const q = document.querySelector("[name='q']").value;
+        const v = document.querySelector("[name='verdict']").value;
+        const params = new URLSearchParams();
+        if (q) params.set('q', q);
+        if (v) params.set('verdict', v);
+        const qs = params.toString();
+        document.getElementById('export-cache-link').href = '/api/cache/export' + (qs ? '?' + qs : '');
+      }
+    </script>
   </div>
 
   <!-- Table -->

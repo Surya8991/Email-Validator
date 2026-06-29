@@ -156,10 +156,14 @@ async def cache_browser(request: Request, current_user: User = Depends(require_a
     })
 
 
+_VALID_CACHE_VERDICTS = {"valid", "invalid", "risky"}
+
+
 @router.get("/partials/cache-table", response_class=HTMLResponse)
 async def cache_table_partial(
     request: Request,
     q: str = "",
+    verdict: str = "",
     page: int = 1,
     current_user: User = Depends(require_auth),
 ):
@@ -169,20 +173,26 @@ async def cache_table_partial(
         raise HTTPException(status_code=403, detail="Admin only")
     limit = 25
     offset = (page - 1) * limit
+    verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_CACHE_VERDICTS else ""
     with Session(engine) as session:
         base_q = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
         if q:
             base_q = base_q.where(EmailCache.email.contains(q))
+        if verdict_q:
+            base_q = base_q.where(EmailCache.verdict == verdict_q)
         rows = session.exec(base_q.offset(offset).limit(limit)).all()
 
         count_q = select(func.count()).select_from(EmailCache)
         if q:
             count_q = count_q.where(EmailCache.email.contains(q))
+        if verdict_q:
+            count_q = count_q.where(EmailCache.verdict == verdict_q)
         total = session.exec(count_q).one() or 0
 
     return templates.TemplateResponse(request, "partials/cache_rows.html", {
         "rows": rows,
         "q": q,
+        "verdict": verdict_q,
         "page": page,
         "total": total,
         "limit": limit,
@@ -326,13 +336,24 @@ async def settings_page(request: Request, current_user: User = Depends(require_a
     })
 
 
-def _list_jobs_lightweight() -> list[dict]:
+_VALID_JOB_STATUSES = {"queued", "running", "done", "failed"}
+
+
+def _list_jobs_lightweight(
+    status: str | None = None, owner: str | None = None
+) -> list[dict]:
     """Same column-projection pattern as the dashboard. Keeps csv_data on Neon."""
     with Session(engine) as session:
-        rows = session.execute(
+        stmt = (
             select(*_JOB_LIST_COLS, Job.user_id, User.email)
             .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
-            .order_by(Job.id.desc()).limit(50)
+        )
+        if status and status in _VALID_JOB_STATUSES:
+            stmt = stmt.where(Job.status == status)
+        if owner:
+            stmt = stmt.where(User.email.contains(owner))  # type: ignore[attr-defined]
+        rows = session.execute(
+            stmt.order_by(Job.id.desc()).limit(50)
         ).all()
     return [
         {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
@@ -343,12 +364,24 @@ def _list_jobs_lightweight() -> list[dict]:
 
 
 @router.get("/jobs", response_class=HTMLResponse)
-async def jobs_list(request: Request, current_user: User = Depends(require_auth)):
+async def jobs_list(
+    request: Request,
+    status: str = "",
+    owner: str = "",
+    current_user: User = Depends(require_auth),
+):
     # Wrap with same 6s ceiling as the dashboard. Cold Neon + a SELECT * that
     # used to pull csv_data was 504-ing this page on every cold start.
+    # owner filter is admin-only — non-admins always see only their own jobs
+    # via the unchanged data path (the table itself is global; ownership is
+    # enforced at the per-job detail/delete routes).
+    is_admin = current_user.role in ("admin", "superadmin")
+    owner_q = owner.strip() if is_admin else ""
+    status_q = status.strip().lower() if status.strip().lower() in _VALID_JOB_STATUSES else ""
     try:
         jobs = await asyncio.wait_for(
-            asyncio.to_thread(_list_jobs_lightweight), timeout=6.0,
+            asyncio.to_thread(_list_jobs_lightweight, status_q or None, owner_q or None),
+            timeout=6.0,
         )
     except (TimeoutError, Exception):  # noqa: BLE001
         jobs = []
@@ -356,6 +389,8 @@ async def jobs_list(request: Request, current_user: User = Depends(require_auth)
         "jobs": jobs,
         "active_page": "jobs",
         "current_user": current_user,
+        "status_filter": status_q,
+        "owner_filter": owner_q,
     })
 
 
