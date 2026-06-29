@@ -5,8 +5,10 @@ import logging
 import os
 from uuid import uuid4
 
+import hmac
+
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -212,6 +214,70 @@ async def create_bulk_job(
             )
 
     return BulkJobResponse(job_id=job_id, total=0, status=response_status)
+
+
+# Conclusions GitHub Actions reports for a job (see the `if:` context):
+#   success, failure, cancelled, skipped, timed_out
+_FAILED_CONCLUSIONS = {"failure", "cancelled", "timed_out", "skipped"}
+
+
+@router.post("/api/bulk/{job_id}/workflow-callback")
+async def workflow_callback(
+    job_id: int,
+    payload: dict,
+    x_callback_token: str = Header(default=""),
+):
+    """Called by the bulk_process workflow's final `if: always()` step so the
+    app learns about runs that were cancelled in the GitHub UI, killed by the
+    runner host, or timed out — cases where `_mark_failed` inside the script
+    never got a chance to run and the Job row would otherwise stay 'running'
+    forever.
+
+    Auth is a shared secret in the `X-Callback-Token` header (set
+    JOB_CALLBACK_TOKEN on both Vercel and the GitHub repo secrets). No user
+    session — the call comes from GitHub Actions, not a browser.
+    """
+    if not settings.job_callback_token:
+        raise HTTPException(status_code=503, detail="JOB_CALLBACK_TOKEN not configured on the server.")
+    if not hmac.compare_digest(x_callback_token, settings.job_callback_token):
+        raise HTTPException(status_code=401, detail="Bad callback token.")
+
+    conclusion = str(payload.get("conclusion") or "").strip().lower()
+    run_url = str(payload.get("run_url") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+
+        # The worker already wrote a final state — don't clobber it.
+        if job.status in ("done", "failed"):
+            return {"ok": True, "noop": True, "status": job.status}
+
+        if conclusion == "success":
+            # Worker should have set status=done. If we got here the script
+            # exited 0 without committing the final state — surface that.
+            job.status = "failed"
+            job.error = (f"Workflow finished successfully but the job was never marked done. "
+                         f"Run: {run_url}")[:500]
+        elif conclusion in _FAILED_CONCLUSIONS:
+            human = conclusion.replace("_", " ")
+            msg = f"Workflow {human}."
+            if reason:
+                msg += f" {reason}"
+            if run_url:
+                msg += f" Run: {run_url}"
+            job.status = "failed"
+            job.error = msg[:500]
+        else:
+            # Unknown conclusion — accept the call but record it for triage.
+            job.status = "failed"
+            job.error = f"Workflow ended with conclusion={conclusion or 'unknown'}. Run: {run_url}"[:500]
+
+        session.add(job)
+        session.commit()
+        return {"ok": True, "status": job.status}
 
 
 _TEMPLATE_ROWS: list[tuple[str, str, str, str]] = [

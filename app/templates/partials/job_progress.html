@@ -37,6 +37,6 @@
   {% elif job.status == 'done' %}
   <p class="text-xs text-green-600 font-medium">✓ Complete · <a href="/api/bulk/{{ job.id }}/download" class="underline">Download CSV</a></p>
   {% elif job.status == 'failed' %}
-  <p class="text-xs text-red-600">✗ Failed: {{ job.error or 'unknown error' }}</p>
+  <p class="text-xs text-red-600">✗ Failed: {{ (job.error or 'unknown error') | linkify }}</p>
   {% endif %}
 </div>

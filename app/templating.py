@@ -5,10 +5,12 @@ visible everywhere. Previously each route file created its own
 `Jinja2Templates(...)` instance, so a filter would have to be re-registered
 in four places.
 """
+import re
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -59,6 +61,25 @@ def job_eta_seconds(processed: int, total: int, started_at: datetime | None) -> 
     return remaining_emails / rate
 
 
+_URL_RE = re.compile(r"https?://[^\s)>\]\"']+")
+
+
+def linkify(value: str | None) -> Markup:
+    """Escape `value` then turn bare http(s) URLs into <a target=_blank> links.
+
+    Used for surfacing failure messages that embed a GitHub Actions run URL
+    without trusting the rest of the string as HTML.
+    """
+    if not value:
+        return Markup("")
+    escaped = str(escape(value))
+    return Markup(_URL_RE.sub(
+        lambda m: f'<a href="{m.group(0)}" target="_blank" rel="noopener" class="underline">{m.group(0)}</a>',
+        escaped,
+    ))
+
+
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.filters["ist"] = ist
 templates.env.filters["duration"] = humanize_duration
+templates.env.filters["linkify"] = linkify

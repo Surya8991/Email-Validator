@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs
     github_pat: str = ""
     github_repo: str = "Surya8991/Email-Validator"  # owner/repo
+    # Shared secret the bulk_process workflow uses to call back into the app
+    # when a run finishes (success / failure / cancelled). MUST match the
+    # JOB_CALLBACK_TOKEN secret configured in the GitHub repo.
+    job_callback_token: str = ""
 
     app_host: str = "0.0.0.0"
     app_port: int = 8000

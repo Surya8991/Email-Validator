@@ -36,6 +36,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Process job
+        id: process
         # Pass inputs.job_id via env, never as a shell-interpolated literal.
         run: python scripts/process_job.py --job-id "$JOB_ID"
         env:
@@ -47,3 +48,26 @@ jobs:
           HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
           # Prefer the per-job value sent by the API; fall back to repo var.
           CACHE_TTL_DAYS: ${{ inputs.cache_ttl_days != '' && inputs.cache_ttl_days || vars.CACHE_TTL_DAYS }}
+
+      # Always notify the app so it can mark the job 'failed' when this run
+      # was cancelled in the GitHub UI, killed by the runner, or timed out —
+      # cases where the script's own _mark_failed never ran. APP_URL is a
+      # repo variable (e.g. https://your-app.vercel.app); JOB_CALLBACK_TOKEN
+      # is a repo secret that MUST match Vercel's env var of the same name.
+      - name: Notify app of run conclusion
+        if: always() && vars.APP_URL != ''
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          CONCLUSION: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          APP_URL: ${{ vars.APP_URL }}
+          CALLBACK_TOKEN: ${{ secrets.JOB_CALLBACK_TOKEN }}
+        run: |
+          curl -fsS -X POST "$APP_URL/api/bulk/$JOB_ID/workflow-callback" \
+            -H "X-Callback-Token: $CALLBACK_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc \
+                --arg c "$CONCLUSION" \
+                --arg u "$RUN_URL" \
+                '{conclusion:$c, run_url:$u}')" \
+            || echo "[WARN] callback to $APP_URL failed (non-fatal)"
