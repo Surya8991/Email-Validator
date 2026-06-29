@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.db import engine
+from app.db import engine, is_postgres
 from app.models import EmailCache
 from app.schemas import ProviderResult
 
@@ -64,7 +64,13 @@ def set_cache(
     strategy: str,
     ttl_days: int | None = None,
 ) -> None:
-    """Upsert a cache entry for this email."""
+    """Upsert a cache entry for this email.
+
+    Uses a real INSERT ... ON CONFLICT (email) DO UPDATE so concurrent
+    workers (two parallel GitHub Actions runs, or two tasks in the same
+    asyncio.gather chunk hitting a duplicated email in the CSV) cannot
+    race on a SELECT-then-INSERT and trip ix_emailcache_email.
+    """
     key = email.strip().lower()
     now = _now()
     effective_ttl = ttl_days if (ttl_days is not None and ttl_days > 0) else settings.cache_ttl_days
@@ -72,28 +78,47 @@ def set_cache(
     provider_data = json.dumps({n: r.model_dump() for n, r in providers.items()})
     providers_used = ",".join(providers.keys())
 
+    row = {
+        "email": key,
+        "verdict": verdict,
+        "provider_data": provider_data,
+        "providers_used": providers_used,
+        "strategy": strategy,
+        "validated_at": now,
+        "expires_at": expires,
+    }
+
+    if is_postgres():
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(EmailCache).values(**row)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["email"],
+            set_={
+                "verdict": stmt.excluded.verdict,
+                "provider_data": stmt.excluded.provider_data,
+                "providers_used": stmt.excluded.providers_used,
+                "strategy": stmt.excluded.strategy,
+                "validated_at": stmt.excluded.validated_at,
+                "expires_at": stmt.excluded.expires_at,
+            },
+        )
+    else:
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+        stmt = sqlite_insert(EmailCache).values(**row)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["email"],
+            set_={
+                "verdict": stmt.excluded.verdict,
+                "provider_data": stmt.excluded.provider_data,
+                "providers_used": stmt.excluded.providers_used,
+                "strategy": stmt.excluded.strategy,
+                "validated_at": stmt.excluded.validated_at,
+                "expires_at": stmt.excluded.expires_at,
+            },
+        )
+
     with Session(engine) as session:
-        existing = session.exec(
-            select(EmailCache).where(EmailCache.email == key)
-        ).first()
-        if existing:
-            existing.verdict = verdict
-            existing.provider_data = provider_data
-            existing.providers_used = providers_used
-            existing.strategy = strategy
-            existing.validated_at = now
-            existing.expires_at = expires
-            session.add(existing)
-        else:
-            session.add(EmailCache(
-                email=key,
-                verdict=verdict,
-                provider_data=provider_data,
-                providers_used=providers_used,
-                strategy=strategy,
-                validated_at=now,
-                expires_at=expires,
-            ))
+        session.execute(stmt)
         session.commit()
 
 
