@@ -3,11 +3,11 @@ run-name: "Retry unknowns — bucket ${{ inputs.bucket || 0 }}/${{ inputs.bucket
 
 on:
   schedule:
-    # Once daily at 23:00 UTC. The 3-strikes rule (default UNKNOWN_STRIKES=3)
-    # means every unknown row is either resolved or flipped to invalid
-    # within 3 nightly passes, so one run per day is enough to drain the
-    # pool without burning extra Bouncify credits.
-    - cron: "0 23 * * *"
+    # Twice daily — 08:00 IST (02:30 UTC) and 23:00 IST (17:30 UTC).
+    # GitHub Actions cron is UTC; IST = UTC+5:30, hence the :30 offsets.
+    # 3-strikes rule (UNKNOWN_STRIKES=3) means each unknown is resolved or
+    # flipped to invalid within ~2 days at this cadence.
+    - cron: "30 2,17 * * *"
   workflow_dispatch:
     inputs:
       batch_size:
