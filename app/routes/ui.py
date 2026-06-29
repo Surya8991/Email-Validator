@@ -1,11 +1,13 @@
 import asyncio
+import csv
+import io
 import json
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
@@ -417,6 +419,51 @@ async def jobs_list(
         "total": total,
         "limit": _JOBS_PER_PAGE,
     })
+
+
+@router.get("/jobs/export")
+def jobs_export(
+    status: str = "",
+    owner: str = "",
+    current_user: User = Depends(require_auth),
+):
+    """CSV export of the job history. Honors the same status/owner filters as
+    the page. Pulls ALL matching jobs (no 50-page cap) since CSVs are normally
+    used for billing / compliance reports.
+    """
+    is_admin = current_user.role in ("admin", "superadmin")
+    owner_q = owner.strip() if is_admin else ""
+    status_q = status.strip().lower() if status.strip().lower() in _VALID_JOB_STATUSES else ""
+    with Session(engine) as session:
+        stmt = (
+            select(*_JOB_LIST_COLS, Job.user_id, User.email)
+            .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
+            .order_by(Job.id.desc())
+        )
+        if status_q:
+            stmt = stmt.where(Job.status == status_q)
+        if owner_q:
+            stmt = stmt.where(User.email.contains(owner_q))  # type: ignore[attr-defined]
+        rows = session.execute(stmt).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "job_id", "status", "total", "processed", "created_at",
+        "filename", "strategy", "owner_email", "error",
+    ])
+    for r in rows:
+        writer.writerow([
+            r[0], r[1], r[2], r[3],
+            r[4].isoformat() if r[4] else "",
+            r[5] or "", r[6] or "", r[9] or "", r[7] or "",
+        ])
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="jobs-{stamp}.csv"'},
+    )
 
 
 @router.get("/jobs/{job_id}", response_class=HTMLResponse)

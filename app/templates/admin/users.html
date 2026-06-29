@@ -10,6 +10,14 @@
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Manage access, roles, and monthly limits</p>
     </div>
     <div class="flex items-center gap-2">
+      {% set users_qs = [] %}
+      {% if q %}{% set _ = users_qs.append('q=' + q) %}{% endif %}
+      {% if role_filter %}{% set _ = users_qs.append('role_filter=' + role_filter) %}{% endif %}
+      {% if status_filter %}{% set _ = users_qs.append('status_filter=' + status_filter) %}{% endif %}
+      <a href="/admin/users/export{% if users_qs %}?{{ users_qs | join('&') }}{% endif %}"
+        class="btn-ghost border border-gray-200 dark:border-gray-700 text-indigo-600 hover:text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30">
+        ⬇ Export CSV
+      </a>
       <button onclick="document.getElementById('invite-modal').classList.remove('hidden')"
         class="btn-primary flex items-center gap-2">
         ✉ Invite User
