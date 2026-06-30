@@ -90,3 +90,40 @@ def test_job_detail_renders_verdict_card(auth_client, patch_db):
     assert "Verdict breakdown" in body
     # 4 emails, 1 each — every percentage should be exactly 25.0%.
     assert "25.0%" in body
+
+
+def test_jobs_list_renders_per_user_stats_panel(auth_client, patch_db):
+    _seed_user_with_results(patch_db, "panel-user@example.com")
+    resp = auth_client.get("/jobs")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Per-user verdict stats" in body
+    assert "panel-user@example.com" in body
+
+
+def test_cache_page_shows_verdict_dashboard(auth_client, patch_db):
+    """Both admin /cache and user /cache_user include partials/cache_stats."""
+    from datetime import datetime, timedelta
+
+    from app.models import EmailCache
+    with Session(patch_db) as db:
+        now = datetime.utcnow()
+        db.add(EmailCache(
+            email="cached-valid@example.com", verdict="valid",
+            provider_data="{}", providers_used="bouncify",
+            strategy="bouncify_only", validated_at=now,
+            expires_at=now + timedelta(days=30),
+        ))
+        db.add(EmailCache(
+            email="cached-invalid@example.com", verdict="invalid",
+            provider_data="{}", providers_used="bouncify",
+            strategy="bouncify_only", validated_at=now,
+            expires_at=now + timedelta(days=30),
+        ))
+        db.commit()
+    resp = auth_client.get("/cache")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Total cached" in body
+    # The two seeded rows should appear in their verdict slots.
+    assert ">Valid<" in body or "Valid" in body

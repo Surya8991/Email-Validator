@@ -12,6 +12,9 @@
     </div>
   </div>
 
+  <!-- Cache verdict dashboard (global counts, same data admins see) -->
+  {% include "partials/cache_stats.html" %}
+
   <div class="card overflow-hidden">
     <div id="my-recent"
       hx-get="/partials/my-recent-validations"
