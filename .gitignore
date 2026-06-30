@@ -35,3 +35,4 @@ contacts_*.csv
 validation_results.json
 validate_bouncify.py
 validate_contacts.py
+.agentmaster/

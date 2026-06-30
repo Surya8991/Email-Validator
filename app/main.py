@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
     import asyncio
     import os
 
+    if settings.production and settings.secret_key == "dev-secret-change-me-in-production":
+        raise RuntimeError(
+            "SECRET_KEY must be changed in production. Set the SECRET_KEY environment variable."
+        )
+
     if not os.getenv("VERCEL"):
         async def _run(fn):
             try:
@@ -131,23 +136,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.method not in _SAFE_METHODS:
-            origin = request.headers.get("origin") or request.headers.get("referer")
-            if origin:
-                try:
-                    origin_host = urlparse(origin).netloc
-                except ValueError:
-                    origin_host = ""
-                host = request.headers.get("host", "")
-                if origin_host and host and origin_host != host:
-                    return JSONResponse(
-                        {"detail": "Cross-origin request blocked."},
-                        status_code=403,
-                    )
+            # Exempt machine-to-machine callbacks (GitHub Actions) from the
+            # browser-origin check — they use a shared secret instead.
+            _exempt = request.url.path.endswith("/workflow-callback")
+            if not _exempt:
+                origin = request.headers.get("origin") or request.headers.get("referer")
+                if origin:
+                    try:
+                        origin_host = urlparse(origin).netloc
+                    except ValueError:
+                        origin_host = ""
+                    host = request.headers.get("host", "")
+                    if origin_host and host and origin_host != host:
+                        return JSONResponse(
+                            {"detail": "Cross-origin request blocked."},
+                            status_code=403,
+                        )
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.tailwindcss.com; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "font-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self';"
+        )
         if settings.production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
