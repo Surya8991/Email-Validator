@@ -519,11 +519,11 @@ async def admin_retry_unknowns(
     the same email always lands in the same bucket — zero double-work
     across parallel runs even as rows resolve.
 
-    GHA's 3-bucket concurrency group on the workflow caps in-flight at 3;
-    the remaining N-3 wait in GitHub's own queue and dequeue as runs
+    GHA's 10-bucket concurrency group on the workflow caps in-flight at
+    10; the remaining N-10 wait in GitHub's own queue and dequeue as runs
     finish. With num_buckets=15 and ~500 emails per bucket, one click
-    covers ~7,500 emails at ~3× the throughput of the old single-run
-    sweep.
+    covers ~7,500 emails at up to ~10× the throughput of a single
+    sequential sweep.
 
     Returns 502 with the GitHub API error of the FIRST failed dispatch
     (subsequent ones aren't attempted) so the UI can surface it. 503
@@ -593,8 +593,8 @@ async def admin_retry_unknowns(
         "ok": True,
         "dispatched": len(dispatched),
         "buckets": dispatched,
-        "in_flight_cap": 3,
-        "queued": max(0, len(dispatched) - 3),
+        "in_flight_cap": 10,
+        "queued": max(0, len(dispatched) - 10),
         "approx_emails": len(dispatched) * batch_size,
     }
 

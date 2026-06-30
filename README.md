@@ -76,7 +76,7 @@ python -m uvicorn app.main:app --reload
 
 6. **DB init runs via GitHub Actions, not Vercel.** Every push to `main` triggers `db_init.yml` which runs `create_db_tables`, admin bootstrap, and team-owner backfill against Neon directly. Vercel cold starts no longer do any DB ops — this keeps them under the 10s Hobby limit even on the first request after a Neon idle-pause.
 
-6. The `bulk_process` and `retry_unknowns` workflows are both capped at **3 concurrent runs** via a 3-bucket `concurrency:` group (Bouncify rate limits start producing `unknown` past ~3 parallel workers). A 4th dispatch waits in GitHub's own queue until a slot frees up.
+6. The `bulk_process` and `retry_unknowns` workflows are both capped at **10 concurrent runs** via a 10-bucket `concurrency:` group keyed on the last digit of `job_id` / `bucket`. An 11th dispatch waits in GitHub's own queue until a slot frees up. Bouncify rate limits may push the `unknown` count up at this concurrency on lower tiers — re-resolve those via the retry-unknowns sweep.
 
 ---
 
