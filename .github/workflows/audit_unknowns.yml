@@ -1,0 +1,37 @@
+name: Audit Unknowns
+
+# Prints verdict x retry_count distribution across EmailResult.
+# Exits 2 if any row violates the 3-strikes invariant
+# (retry_count >= strikes AND verdict = 'unknown').
+#
+# Trigger: gh workflow run audit_unknowns.yml
+
+on:
+  workflow_dispatch:
+    inputs:
+      strikes:
+        description: "Strikes threshold (default 3)"
+        required: false
+        type: string
+        default: "3"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run audit
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIKES: ${{ inputs.strikes || '3' }}
+        run: python scripts/audit_unknowns.py --strikes "$STRIKES"
