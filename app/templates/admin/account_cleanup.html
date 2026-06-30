@@ -166,31 +166,30 @@
           📊 Push to Google Sheets
         </button>
         <span id="sheets-status" class="text-xs text-gray-500 dark:text-gray-400"></span>
-        <a id="sheets-link" href="#" target="_blank" rel="noopener"
-          class="hidden text-xs text-indigo-600 hover:underline font-medium">
-          Open spreadsheet →
-        </a>
       </div>
+      <div id="sheets-links" class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs"></div>
       <p class="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
-        Writes 2 tabs &mdash; <strong>Verified</strong> and
-        <strong>Invalid</strong> (with drop_reason). Empty columns are
-        dropped per tab to stay under Sheets' 10M cell-per-spreadsheet
-        cap. The full annotated audit (with cache_verdict per row)
-        stays on the <em>⬇ Annotated full CSV</em> button above —
-        wide CRM exports exceed the Sheets cap on the audit tab
-        alone.
+        Writes <strong>Verified</strong> and <strong>Invalid</strong>
+        (with drop_reason). Empty columns are dropped per tab. If
+        Verified is too wide to fit under Sheets' 10M cell-per-
+        spreadsheet cap, it's split across multiple spreadsheets
+        (<em>pt 1 of N</em>, <em>pt 2 of N</em>, …) — each link
+        appears below the button. The full annotated audit (with
+        cache_verdict per row) stays on the <em>⬇ Annotated full
+        CSV</em> button above.
         {% if google_sheets_target_id %}
-          Updates the configured target spreadsheet in place: existing
-          Verified / Invalid tabs are cleared and rewritten; any
-          other tabs (including any stale <em>All</em> tab from
-          earlier runs) are left alone. If the target can't be
-          reached, a new spreadsheet is created as fallback.
+          The configured target spreadsheet receives pt 1 + Invalid
+          (existing Verified / Invalid tabs cleared and rewritten;
+          other tabs left alone). Overflow parts go to freshly-
+          created spreadsheets named with the part number. If the
+          target can't be reached, a new spreadsheet is created as
+          fallback.
         {% else %}
-          Creates a new spreadsheet in your Drive each run.
+          Creates spreadsheets in your Drive each run.
         {% endif %}
         Signs in with your Google account on first use; nothing leaves
         your browser except writes to the Sheets API. Expect
-        30–90&nbsp;s for an 84k-row file.
+        30–90&nbsp;s per spreadsheet.
       </p>
     </div>
     {% endif %}
@@ -612,7 +611,23 @@
   // configured in Google Cloud Console).
   const SHEETS_BTN = $("btn-push-sheets");
   const SHEETS_STATUS = $("sheets-status");
-  const SHEETS_LINK = $("sheets-link");
+  const SHEETS_LINKS = $("sheets-links");
+
+  function _renderSheetsLinks(results) {
+    // results: [{ url, label, reused }]
+    SHEETS_LINKS.innerHTML = "";
+    if (!results.length) return;
+    for (const r of results) {
+      const a = document.createElement("a");
+      a.href = r.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.className =
+        "inline-flex items-center gap-1 text-indigo-600 hover:underline font-medium";
+      a.textContent = `${r.label} →${r.reused ? " (target)" : ""}`;
+      SHEETS_LINKS.appendChild(a);
+    }
+  }
   const GOOGLE_OAUTH_CLIENT_ID = {{ google_oauth_client_id | tojson }};
   // Optional fixed-target spreadsheet ID. When set, each push REPLACES
   // the Verified / Invalid / All tabs inside this spreadsheet instead
@@ -812,7 +827,7 @@
       return;
     }
     SHEETS_BTN.disabled = true;
-    SHEETS_LINK.classList.add("hidden");
+    SHEETS_LINKS.innerHTML = "";
     SHEETS_STATUS.textContent = "Authorizing…";
     try {
       await _ensureGoogleSdk();
@@ -863,44 +878,87 @@
         { title: "Invalid",  rowCount: droppedValues.length  + ROW_BUFFER, columnCount: droppedValues[0].length  + COL_EXTRA },
       ];
 
-      // 4. Pre-flight: refuse to call Sheets if the pre-sized grids
-      //    would breach the 10M cell-per-spreadsheet cap. Threshold
-      //    9.5M leaves headroom for default-sheet overhead.
-      const projectedCells = tabSpecs.reduce(
-        (acc, s) => acc + s.rowCount * s.columnCount, 0,
-      );
+      // 4. Decide whether Verified fits in ONE spreadsheet alongside
+      //    Invalid, or whether it needs to be split across N
+      //    spreadsheets to stay under Sheets' 10M cell-per-
+      //    spreadsheet cap. Primary spreadsheet hosts Verified
+      //    pt 1 + Invalid; each overflow spreadsheet holds one
+      //    Verified pt only.
       const CELL_LIMIT = 9_500_000;
-      if (projectedCells > CELL_LIMIT) {
+      const OVERHEAD = 50_000;  // default-sheet + safety
+      const verifiedColCount = verifiedValues[0].length + COL_EXTRA;
+      const invalidRowCount = droppedValues.length + ROW_BUFFER;
+      const invalidColCount = droppedValues[0].length + COL_EXTRA;
+      const invalidCells = invalidRowCount * invalidColCount;
+
+      const primaryMaxRows = Math.max(
+        1,
+        Math.floor((CELL_LIMIT - invalidCells - OVERHEAD) / verifiedColCount) - ROW_BUFFER,
+      );
+      const overflowMaxRows = Math.max(
+        1,
+        Math.floor((CELL_LIMIT - OVERHEAD) / verifiedColCount) - ROW_BUFFER,
+      );
+
+      // Sanity: a single Verified row that exceeds the cap means
+      // the data simply can't fit at this width. Refuse early
+      // with an actionable message.
+      if (
+        verifiedColCount > CELL_LIMIT / 2 ||
+        primaryMaxRows < 1 ||
+        overflowMaxRows < 1 ||
+        invalidCells + OVERHEAD > CELL_LIMIT
+      ) {
         throw new Error(
-          `Sheet too large after per-tab trim: ${projectedCells.toLocaleString()} ` +
-          `cells (Verified ${verifiedActive.length} cols × ${verifiedRows.length.toLocaleString()} rows; ` +
-          `Invalid ${invalidActive.length} cols × ${droppedRowsList.length.toLocaleString()} rows) ` +
-          `exceeds Sheets' 10M cell-per-spreadsheet limit. Drop unused CSV ` +
-          `columns before pushing, or use the CSV downloads instead.`,
+          `Data too wide for Sheets: Verified ${verifiedColCount} cols, ` +
+          `Invalid ${invalidColCount} cols. Use the CSV downloads instead.`,
         );
       }
-      const droppedCols =
+
+      // Split Verified data rows into chunks. chunks[0] is the
+      // PRIMARY (lives with Invalid); chunks[1..] are OVERFLOW.
+      const headerRow = verifiedValues[0];
+      const dataRows = verifiedValues.slice(1);
+      const chunks = [];
+      let cursor = 0;
+      chunks.push([headerRow, ...dataRows.slice(cursor, cursor + primaryMaxRows)]);
+      cursor += primaryMaxRows;
+      while (cursor < dataRows.length) {
+        chunks.push([headerRow, ...dataRows.slice(cursor, cursor + overflowMaxRows)]);
+        cursor += overflowMaxRows;
+      }
+      const partCount = chunks.length;
+
+      const totalCells = invalidCells + chunks.reduce(
+        (acc, c) => acc + (c.length + ROW_BUFFER) * verifiedColCount, 0,
+      );
+      const droppedColSlots =
         (state.headers.length - verifiedActive.length) +
         (state.headers.length - invalidActive.length);
       SHEETS_STATUS.textContent =
-        `Trimmed ${droppedCols} empty column-slots across 2 tabs ` +
-        `(Verified ${verifiedActive.length}, Invalid ${invalidActive.length}). ` +
-        `${projectedCells.toLocaleString()} cells.`;
+        `Trimmed ${droppedColSlots} empty column-slots ` +
+        `(Verified ${verifiedActive.length} cols, Invalid ${invalidActive.length} cols). ` +
+        (partCount > 1
+          ? `Verified spans ${partCount} spreadsheets to stay under Sheets' 10M cap.`
+          : `${totalCells.toLocaleString()} cells total.`);
 
-      // 3. Resolve the destination spreadsheet. Two paths:
-      //    a) If GOOGLE_SHEETS_TARGET_ID is set AND we can read it →
-      //       reuse it. Clear our 3 tabs (or add them if missing) and
-      //       resize their grids. Other tabs in the spreadsheet stay
-      //       untouched.
-      //    b) Otherwise → create a fresh spreadsheet (original
-      //       behaviour). Used as the fallback whenever (a) fails:
-      //       blank ID, 404 (deleted), 403 (no edit access), or any
-      //       network error.
+      // 5. Build a primarySpecs descriptor for the FIRST spreadsheet
+      //    (Verified pt 1 + Invalid). Each overflow spreadsheet only
+      //    holds its own Verified tab — built inline below.
+      const primaryChunk = chunks[0];
+      const primarySpecs = [
+        { title: "Verified", rowCount: primaryChunk.length + ROW_BUFFER, columnCount: verifiedColCount },
+        { title: "Invalid",  rowCount: invalidRowCount, columnCount: invalidColCount },
+      ];
+
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const partSuffix = partCount > 1 ? ` pt 1 of ${partCount}` : "";
 
-      let spreadsheetId = null;
-      let spreadsheetUrl = null;
-      let reused = false;
+      // 6. Resolve PRIMARY destination — try the configured target,
+      //    fall back to creating a fresh spreadsheet.
+      let primaryId = null;
+      let primaryUrl = null;
+      let primaryReused = false;
 
       if (GOOGLE_SHEETS_TARGET_ID) {
         SHEETS_STATUS.textContent = "Checking target spreadsheet…";
@@ -911,10 +969,10 @@
           );
           if (infoResp.ok) {
             const info = await infoResp.json();
-            await _prepareTargetTabs(info, tabSpecs);
-            spreadsheetId = info.spreadsheetId;
-            spreadsheetUrl = info.spreadsheetUrl;
-            reused = true;
+            await _prepareTargetTabs(info, primarySpecs);
+            primaryId = info.spreadsheetId;
+            primaryUrl = info.spreadsheetUrl;
+            primaryReused = true;
           } else {
             console.warn(
               `Target spreadsheet inaccessible (${infoResp.status}); creating new one. Body:`,
@@ -926,8 +984,8 @@
         }
       }
 
-      if (!spreadsheetId) {
-        SHEETS_STATUS.textContent = "Creating spreadsheet…";
+      if (!primaryId) {
+        SHEETS_STATUS.textContent = "Creating primary spreadsheet…";
         const createResp = await fetch(
           "https://sheets.googleapis.com/v4/spreadsheets",
           {
@@ -937,8 +995,8 @@
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              properties: { title: `${baseName()} — cleanup ${stamp}` },
-              sheets: tabSpecs.map((spec) => ({
+              properties: { title: `${baseName()} — cleanup ${stamp}${partSuffix}` },
+              sheets: primarySpecs.map((spec) => ({
                 properties: {
                   title: spec.title,
                   gridProperties: { rowCount: spec.rowCount, columnCount: spec.columnCount },
@@ -948,29 +1006,83 @@
           },
         );
         if (!createResp.ok) {
-          throw new Error(`Spreadsheet create failed: ${await createResp.text()}`);
+          throw new Error(`Primary create failed: ${await createResp.text()}`);
         }
         const created = await createResp.json();
-        spreadsheetId = created.spreadsheetId;
-        spreadsheetUrl = created.spreadsheetUrl;
+        primaryId = created.spreadsheetId;
+        primaryUrl = created.spreadsheetUrl;
       }
 
-      // 5. Write each tab. Verified first (typically larger of the
-      //    two), then Invalid. Each write is chunked under the hood.
-      //    The All tab is intentionally NOT pushed — at 84k rows ×
-      //    ~520 cols it alone exceeds Sheets' 10M cell limit; the
-      //    same audit data lives in the "⬇ Annotated full CSV"
-      //    download.
-      await _writeTab(spreadsheetId, "Verified", verifiedValues, "Verified:");
-      await _writeTab(spreadsheetId, "Invalid", droppedValues, "Invalid:");
+      // 7. Write the PRIMARY spreadsheet: Verified pt 1 + Invalid.
+      const primaryVerifiedLabel = partCount > 1 ? `Verified pt 1/${partCount}:` : "Verified:";
+      await _writeTab(primaryId, "Verified", primaryChunk, primaryVerifiedLabel);
+      await _writeTab(primaryId, "Invalid", droppedValues, "Invalid:");
 
+      const spreadsheetResults = [{
+        url: primaryUrl,
+        label: partCount > 1
+          ? `Verified pt 1/${partCount} + Invalid`
+          : "Verified + Invalid",
+        reused: primaryReused,
+      }];
+
+      // 8. Write OVERFLOW spreadsheets — one per remaining chunk.
+      for (let i = 1; i < partCount; i++) {
+        const chunk = chunks[i];
+        SHEETS_STATUS.textContent =
+          `Creating overflow spreadsheet ${i + 1} of ${partCount}…`;
+        const createResp = await fetch(
+          "https://sheets.googleapis.com/v4/spreadsheets",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${_googleToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              properties: {
+                title: `${baseName()} — cleanup ${stamp} pt ${i + 1} of ${partCount}`,
+              },
+              sheets: [
+                {
+                  properties: {
+                    title: "Verified",
+                    gridProperties: {
+                      rowCount: chunk.length + ROW_BUFFER,
+                      columnCount: verifiedColCount,
+                    },
+                  },
+                },
+              ],
+            }),
+          },
+        );
+        if (!createResp.ok) {
+          throw new Error(`Overflow ${i + 1} create failed: ${await createResp.text()}`);
+        }
+        const overflow = await createResp.json();
+        await _writeTab(
+          overflow.spreadsheetId, "Verified", chunk,
+          `Verified pt ${i + 1}/${partCount}:`,
+        );
+        spreadsheetResults.push({
+          url: overflow.spreadsheetUrl,
+          label: `Verified pt ${i + 1}/${partCount}`,
+          reused: false,
+        });
+      }
+
+      // 9. Render links + final status. Open the primary so the
+      //    user lands on the spreadsheet they're most likely
+      //    monitoring (their target or the one with Invalid).
+      _renderSheetsLinks(spreadsheetResults);
+      const destSuffix = partCount > 1
+        ? ` across ${partCount} spreadsheets`
+        : ` (${primaryReused ? "replaced existing tabs in target spreadsheet" : "new spreadsheet created"})`;
       SHEETS_STATUS.textContent =
         `Done — ${verifiedRows.length.toLocaleString()} verified, ` +
-        `${droppedRowsList.length.toLocaleString()} invalid ` +
-        `(${reused ? "replaced existing tabs in target spreadsheet" : "new spreadsheet created"}).`;
-      SHEETS_LINK.href = spreadsheetUrl;
-      SHEETS_LINK.classList.remove("hidden");
-      window.open(spreadsheetUrl, "_blank", "noopener");
+        `${droppedRowsList.length.toLocaleString()} invalid${destSuffix}.`;
+      window.open(primaryUrl, "_blank", "noopener");
     } catch (e) {
       console.error(e);
       SHEETS_STATUS.textContent = "Failed: " + (e && e.message ? e.message : e);
