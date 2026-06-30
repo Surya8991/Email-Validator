@@ -45,8 +45,11 @@
       hx-get="/" hx-trigger="every 60s"
       hx-select="#dash-verdict" hx-swap="outerHTML">
       <div>
-        <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict Distribution</h2>
-        <p class="text-[10px] text-gray-400 mt-0.5">All-time across every job — sourced from EmailResult, includes unknowns (these are NOT in the cache table by design).</p>
+        <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict Distribution (all validations)</h2>
+        <p class="text-xs text-gray-400 mt-0.5">
+          Counts every validation ever — includes unknowns and duplicate lookups.
+          <a href="/cache" class="text-indigo-500 hover:underline">View the deduped cache state →</a>
+        </p>
       </div>
       {% set total_v = (verdict_counts.get('valid',0) + verdict_counts.get('invalid',0) + verdict_counts.get('risky',0) + verdict_counts.get('unknown',0)) %}
       {% if total_v > 0 %}
