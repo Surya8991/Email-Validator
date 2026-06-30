@@ -357,6 +357,11 @@ async def workflow_callback(
 
         # The worker already wrote a final state — don't clobber it.
         if job.status in ("done", "failed"):
+            # Still clear csv_data if the worker left it populated.
+            if job.csv_data:
+                job.csv_data = ""
+                session.add(job)
+                session.commit()
             return {"ok": True, "noop": True, "status": job.status}
 
         if conclusion == "success":
@@ -379,6 +384,9 @@ async def workflow_callback(
             job.status = "failed"
             job.error = f"Workflow ended with conclusion={conclusion or 'unknown'}. Run: {run_url}"[:500]
 
+        # Drop the raw CSV payload now that the workflow is terminal — the
+        # email addresses don't need to live in the DB indefinitely.
+        job.csv_data = ""
         session.add(job)
         session.commit()
         return {"ok": True, "status": job.status}

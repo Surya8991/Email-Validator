@@ -7,6 +7,7 @@ blocks the common case — a single attacker spraying one endpoint.
 """
 from __future__ import annotations
 
+import ipaddress
 import time
 from collections import deque
 from threading import Lock
@@ -17,11 +18,36 @@ from fastapi import HTTPException, Request
 _buckets: dict[tuple[str, str], deque[float]] = {}
 _lock = Lock()
 
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _is_private(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(addr in net for net in _PRIVATE_NETS)
+    except ValueError:
+        return False
+
 
 def _client_ip(request: Request) -> str:
+    """Extract the real client IP from X-Forwarded-For.
+
+    Takes the rightmost non-private IP in the chain — the trusted proxy
+    appends the real client address at the end, while the leftmost entry
+    is attacker-controlled and must be ignored.
+    """
     fwd = request.headers.get("x-forwarded-for", "")
     if fwd:
-        return fwd.split(",")[0].strip()
+        for part in reversed([p.strip() for p in fwd.split(",")]):
+            if part and not _is_private(part):
+                return part
     return request.client.host if request.client else "?"
 
 

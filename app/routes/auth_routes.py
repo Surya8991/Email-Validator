@@ -5,6 +5,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session, select
@@ -115,7 +116,7 @@ async def login_post(
         httponly=True,
         samesite="lax",
         max_age=SESSION_TTL_DAYS * 86400,
-        secure=settings.production,
+        secure=settings.production or settings.base_url.startswith("https://"),
     )
     return resp
 
@@ -206,7 +207,9 @@ async def profile_change_email(
     new_email = new_email.strip().lower()
     if not _verify_password(current_password, current_user.password_hash):
         return RedirectResponse(url="/profile?err=bad_password", status_code=302)
-    if "@" not in new_email or "." not in new_email:
+    try:
+        validate_email(new_email, check_deliverability=False)
+    except EmailNotValidError:
         return RedirectResponse(url="/profile?err=invalid_email", status_code=302)
     if new_email == current_user.email:
         return RedirectResponse(url="/profile?saved=email", status_code=302)
@@ -262,7 +265,7 @@ async def profile_change_password(
         httponly=True,
         samesite="lax",
         max_age=SESSION_TTL_DAYS * 86400,
-        secure=settings.production,
+        secure=settings.production or settings.base_url.startswith("https://"),
     )
     return resp
 
@@ -469,6 +472,6 @@ async def invite_accept(
         httponly=True,
         samesite="lax",
         max_age=SESSION_TTL_DAYS * 86400,
-        secure=settings.production,
+        secure=settings.production or settings.base_url.startswith("https://"),
     )
     return resp

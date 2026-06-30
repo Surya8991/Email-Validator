@@ -94,5 +94,6 @@ async def process_bulk_job(
         if job:
             job.status = "done"
             job.processed = len(rows)
+            job.csv_data = ""
             session.add(job)
             session.commit()
