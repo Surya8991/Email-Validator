@@ -47,6 +47,55 @@
     {% include "partials/job_progress.html" %}
   </div>
 
+  <!-- Verdict summary -->
+  {% set v = job.verdicts or {} %}
+  {% set vt = (v.valid or 0) + (v.invalid or 0) + (v.risky or 0) + (v.unknown or 0) %}
+  {% if vt > 0 %}
+  <div class="card p-5">
+    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Verdict breakdown</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Total</div>
+        <div class="text-xl font-semibold">{{ vt }}</div>
+      </div>
+      <div class="rounded-lg border border-green-200 dark:border-green-900 p-3 bg-green-50/30 dark:bg-green-950/20">
+        <div class="text-xs uppercase tracking-wide text-green-700 dark:text-green-300">Valid</div>
+        <div class="text-xl font-semibold text-green-700 dark:text-green-300">
+          {{ v.valid or 0 }}
+          <span class="text-xs font-normal text-gray-500">({{ ((v.valid or 0) / vt * 100) | round(1) }}%)</span>
+        </div>
+      </div>
+      <div class="rounded-lg border border-red-200 dark:border-red-900 p-3 bg-red-50/30 dark:bg-red-950/20">
+        <div class="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">Invalid</div>
+        <div class="text-xl font-semibold text-red-700 dark:text-red-300">
+          {{ v.invalid or 0 }}
+          <span class="text-xs font-normal text-gray-500">({{ ((v.invalid or 0) / vt * 100) | round(1) }}%)</span>
+        </div>
+      </div>
+      <div class="rounded-lg border border-amber-200 dark:border-amber-900 p-3 bg-amber-50/30 dark:bg-amber-950/20">
+        <div class="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">Risky</div>
+        <div class="text-xl font-semibold text-amber-700 dark:text-amber-300">
+          {{ v.risky or 0 }}
+          <span class="text-xs font-normal text-gray-500">({{ ((v.risky or 0) / vt * 100) | round(1) }}%)</span>
+        </div>
+      </div>
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+        <div class="text-xs uppercase tracking-wide text-gray-500">Unknown</div>
+        <div class="text-xl font-semibold text-gray-600 dark:text-gray-300">
+          {{ v.unknown or 0 }}
+          <span class="text-xs font-normal text-gray-500">({{ ((v.unknown or 0) / vt * 100) | round(1) }}%)</span>
+        </div>
+      </div>
+    </div>
+    <div class="mt-3 flex h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+      {% if v.valid %}<div class="bg-green-500" style="width: {{ ((v.valid or 0) / vt * 100) }}%"></div>{% endif %}
+      {% if v.invalid %}<div class="bg-red-500" style="width: {{ ((v.invalid or 0) / vt * 100) }}%"></div>{% endif %}
+      {% if v.risky %}<div class="bg-amber-400" style="width: {{ ((v.risky or 0) / vt * 100) }}%"></div>{% endif %}
+      {% if v.unknown %}<div class="bg-gray-400" style="width: {{ ((v.unknown or 0) / vt * 100) }}%"></div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Download + filter -->
   {% if job.status == 'done' %}
   <div class="flex flex-wrap gap-3 items-center">

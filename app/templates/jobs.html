@@ -32,6 +32,56 @@
 
   {% set is_admin_user = current_user and current_user.role in ('admin', 'superadmin') %}
 
+  <!-- Per-user verdict stats (top 30 users by total emails) -->
+  {% if user_stats %}
+  <details class="card overflow-hidden" open>
+    <summary class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 cursor-pointer select-none">
+      <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">Per-user verdict stats</span>
+      <span class="text-xs text-gray-400 ml-2">top {{ user_stats | length }} by emails processed</span>
+    </summary>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 dark:bg-gray-800/50">
+        <tr>
+          <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">User</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Jobs</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Processed</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Valid</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Invalid</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Risky</th>
+          <th class="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Unknown</th>
+          <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Mix</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for s in user_stats %}
+        {% set t = s.total %}
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+          <td class="px-4 py-2.5 text-gray-700 dark:text-gray-300 text-xs max-w-44 truncate" title="{{ s.user_email }}">
+            {{ s.user_email }}
+          </td>
+          <td class="px-4 py-2.5 text-right font-mono text-gray-600 dark:text-gray-400">{{ s.jobs }}</td>
+          <td class="px-4 py-2.5 text-right font-mono text-gray-600 dark:text-gray-400">{{ s.processed }}</td>
+          <td class="px-4 py-2.5 text-right font-mono text-green-700 dark:text-green-300">{{ s.valid }}</td>
+          <td class="px-4 py-2.5 text-right font-mono text-red-600 dark:text-red-300">{{ s.invalid }}</td>
+          <td class="px-4 py-2.5 text-right font-mono text-amber-600 dark:text-amber-300">{{ s.risky }}</td>
+          <td class="px-4 py-2.5 text-right font-mono text-gray-500 dark:text-gray-400">{{ s.unknown }}</td>
+          <td class="px-4 py-2.5">
+            {% if t > 0 %}
+            <div class="flex h-1.5 w-32 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+              {% if s.valid %}<div class="bg-green-500" style="width: {{ (s.valid / t * 100) }}%"></div>{% endif %}
+              {% if s.invalid %}<div class="bg-red-500" style="width: {{ (s.invalid / t * 100) }}%"></div>{% endif %}
+              {% if s.risky %}<div class="bg-amber-400" style="width: {{ (s.risky / t * 100) }}%"></div>{% endif %}
+              {% if s.unknown %}<div class="bg-gray-400" style="width: {{ (s.unknown / t * 100) }}%"></div>{% endif %}
+            </div>
+            {% else %}<span class="text-gray-300">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
   <!-- Filter bar -->
   <form method="get" action="/jobs" class="card p-4 flex items-center gap-2 flex-wrap">
     <select name="status" class="input-base text-sm">
@@ -104,6 +154,15 @@
               </div>
               <span class="text-xs">{{ job.processed }}/{{ job.total }}</span>
             </div>
+            {% set v = job.verdicts or {} %}
+            {% if (v.valid or 0) + (v.invalid or 0) + (v.risky or 0) + (v.unknown or 0) > 0 %}
+            <div class="flex items-center gap-1.5 mt-1.5 text-[10px] font-medium">
+              {% if v.valid %}<span class="text-green-700 dark:text-green-300" title="valid">✓{{ v.valid }}</span>{% endif %}
+              {% if v.invalid %}<span class="text-red-600 dark:text-red-300" title="invalid">✗{{ v.invalid }}</span>{% endif %}
+              {% if v.risky %}<span class="text-amber-600 dark:text-amber-300" title="risky">⚠{{ v.risky }}</span>{% endif %}
+              {% if v.unknown %}<span class="text-gray-500 dark:text-gray-400" title="unknown">?{{ v.unknown }}</span>{% endif %}
+            </div>
+            {% endif %}
             {% else %}-{% endif %}
           </td>
           <td class="px-4 py-3">
