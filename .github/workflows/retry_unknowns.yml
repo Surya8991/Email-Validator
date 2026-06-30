@@ -39,10 +39,10 @@ on:
         type: string
         default: "bouncify_only"
       strikes:
-        description: "Flip verdict to 'invalid' after this many failed retries (default: 3)"
+        description: "Flip verdict to 'invalid' after this many failed retries (default: 2)"
         required: false
         type: string
-        default: "3"
+        default: "2"
       bucket:
         description: "Hash-bucket index this run processes, 0-based (default: 0)"
         required: false
@@ -106,7 +106,7 @@ jobs:
           MAX_BATCHES: ${{ inputs.max_batches || '0' }}
           JOB_ID: ${{ inputs.job_id || '' }}
           SINCE_DAYS: ${{ inputs.since_days || '0' }}
-          STRIKES: ${{ inputs.strikes || '3' }}
+          STRIKES: ${{ inputs.strikes || '2' }}
           BUCKET: ${{ inputs.bucket || '0' }}
           BUCKET_OF: ${{ inputs.bucket_of || '1' }}
           PROVIDERS: ${{ inputs.providers || 'bouncify' }}
