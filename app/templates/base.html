@@ -266,7 +266,7 @@
 
   <!-- ── Main content ───────────────────────────────────────────── -->
   <div class="flex-1">
-    <main class="max-w-5xl mx-auto px-6 py-8">
+    <main class="{% block main_max_w %}max-w-5xl{% endblock %} mx-auto px-6 py-8">
       {% block content %}{% endblock %}
     </main>
   </div>
