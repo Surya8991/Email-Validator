@@ -120,6 +120,30 @@
         ⬇ Emails not in cache <span id="pending-count" class="text-xs text-gray-500"></span>
       </button>
     </div>
+
+    <!-- Lightweight email-only exports — single 'email' column, no
+         CRM metadata. ~60× smaller than the full-row downloads above
+         and ideal when the next step is just sending the list to an
+         outreach / cleanup tool. -->
+    <div class="mt-2 pt-3 border-t border-dashed border-gray-200 dark:border-gray-800">
+      <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">
+        Emails-only exports (one column, ~60× smaller)
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <button id="btn-dl-verified-emails"
+          class="inline-flex items-center gap-1.5 text-xs border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 font-medium px-3 py-1.5 rounded-lg">
+          ⬇ Verified emails only <span id="verified-emails-count" class="opacity-70"></span>
+        </button>
+        <button id="btn-dl-kept-emails"
+          class="inline-flex items-center gap-1.5 text-xs border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 font-medium px-3 py-1.5 rounded-lg">
+          ⬇ Cleaned emails only
+        </button>
+        <button id="btn-dl-dropped-emails"
+          class="inline-flex items-center gap-1.5 text-xs border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 font-medium px-3 py-1.5 rounded-lg">
+          ⬇ Dropped emails only
+        </button>
+      </div>
+    </div>
     <p class="text-xs text-gray-500 dark:text-gray-400 mt-4">
       Feed the "not in cache" file straight into the
       <a href="/" class="text-indigo-600 hover:underline">bulk uploader</a>
@@ -183,6 +207,8 @@
       .forEach((id) => { $(id).textContent = "0"; });
     const vc = document.getElementById("verified-count");
     if (vc) vc.textContent = "";
+    const vec = document.getElementById("verified-emails-count");
+    if (vec) vec.textContent = "";
     const pc = document.getElementById("pending-count");
     if (pc) pc.textContent = "";
     $("btn-lookup").disabled = false;
@@ -401,6 +427,8 @@
     $("out-total").textContent = state.rows.length.toLocaleString();
     const vc = document.getElementById("verified-count");
     if (vc) vc.textContent = `(${state.verifiedOnly.length.toLocaleString()})`;
+    const vec = document.getElementById("verified-emails-count");
+    if (vec) vec.textContent = `(${state.verifiedOnly.length.toLocaleString()})`;
     show("step-exports");
     document.getElementById("step-exports").scrollIntoView({ behavior: "smooth" });
   }
@@ -467,6 +495,52 @@
     });
     downloadCSVText(`${baseName()}.annotated.csv`,
       Papa.unparse(augmented, { columns: headers }));
+  });
+
+  // ---- Step 4b: lightweight emails-only downloads --------------------------
+  // Same source data as the full-row buttons above, but exported as a
+  // single `email` column — ~60× smaller, useful when downstream tooling
+  // (outreach platforms, list cleaners) only needs the address.
+  function _extractEmails(rows) {
+    const col = state.emailCol;
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      const e = (r[col] || "").trim();
+      if (e && !seen.has(e)) { seen.add(e); out.push(e); }
+    }
+    return out;
+  }
+
+  function _downloadEmailsOnly(rows, filename, emptyMsg) {
+    const emails = _extractEmails(rows);
+    if (emails.length === 0) { alert(emptyMsg); return; }
+    downloadCSVText(filename,
+      Papa.unparse(emails.map((e) => ({ email: e })), { columns: ["email"] }));
+  }
+
+  $("btn-dl-verified-emails").addEventListener("click", () => {
+    _downloadEmailsOnly(
+      state.verifiedOnly || [],
+      `${baseName()}.verified-emails.csv`,
+      "No verified (cache verdict = 'valid') emails to export.",
+    );
+  });
+
+  $("btn-dl-kept-emails").addEventListener("click", () => {
+    _downloadEmailsOnly(
+      state.kept,
+      `${baseName()}.cleaned-emails.csv`,
+      "No kept rows yet — run Filter rows first.",
+    );
+  });
+
+  $("btn-dl-dropped-emails").addEventListener("click", () => {
+    _downloadEmailsOnly(
+      (state.dropped || []).map((d) => d.row),
+      `${baseName()}.dropped-emails.csv`,
+      "No dropped rows yet — run Filter rows first.",
+    );
   });
 })();
 </script>
