@@ -1,0 +1,47 @@
+name: Mark Job Unknowns Invalid
+
+# Force-flips every 'unknown' EmailResult row for a given job to 'invalid'.
+# Use to skip the remaining retry strikes when you're certain the unknowns
+# won't resolve (dead domains, parked MX, etc.) and want the job fully closed.
+#
+# Trigger: gh workflow run mark_unknowns_invalid.yml -f job_id=79
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Job ID whose unknowns get flipped to invalid"
+        required: true
+        type: string
+      dry_run:
+        description: "Just print the count without updating"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  flip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Flip unknowns
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python scripts/mark_job_unknowns_invalid.py --job-id "$JOB_ID" --dry-run
+          else
+            python scripts/mark_job_unknowns_invalid.py --job-id "$JOB_ID"
+          fi
