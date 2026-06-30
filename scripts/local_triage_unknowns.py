@@ -68,7 +68,7 @@ async def main() -> int:
                    help="Only process unknowns with retry_count >= this. Default 0.")
     args = p.parse_args()
 
-    emails = _fetch_unknown_emails(args.min_rc if hasattr(args, "min_rc") else args.min_retry_count)
+    emails = _fetch_unknown_emails(args.min_retry_count)
     total = len(emails)
     print(f"unknowns to triage: {total} (retry_count >= {args.min_retry_count})")
     if total == 0:

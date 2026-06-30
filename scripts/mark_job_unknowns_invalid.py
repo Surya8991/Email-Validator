@@ -24,10 +24,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import text  # noqa: E402
-from sqlmodel import Session  # noqa: E402
+from sqlalchemy import func  # noqa: E402
+from sqlalchemy import update as sa_update
+from sqlmodel import Session, select  # noqa: E402
 
 from app.db import engine  # noqa: E402
+from app.models import EmailResult  # noqa: E402
 
 
 def main() -> int:
@@ -39,15 +41,16 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    clauses = ["verdict = 'unknown'"]
-    params: dict = {}
-    if args.job_id is not None:
-        clauses.append("job_id = :jid")
-        params["jid"] = args.job_id
-    if args.min_retry_count > 0:
-        clauses.append("retry_count >= :rc")
-        params["rc"] = args.min_retry_count
-    where = " AND ".join(clauses)
+    # Build the WHERE via SQLAlchemy column expressions rather than
+    # text(f"...{where}") interpolation — keeps CodeQL's py/sql-injection
+    # taint analyzer happy and isn't tied to the table being literal SQL.
+    def _scope_filter(stmt):
+        stmt = stmt.where(EmailResult.verdict == "unknown")
+        if args.job_id is not None:
+            stmt = stmt.where(EmailResult.job_id == args.job_id)
+        if args.min_retry_count > 0:
+            stmt = stmt.where(EmailResult.retry_count >= args.min_retry_count)
+        return stmt
 
     scope = f"job_id={args.job_id}" if args.job_id else "all jobs"
     if args.min_retry_count > 0:
@@ -55,16 +58,14 @@ def main() -> int:
 
     with Session(engine) as db:
         n = db.execute(
-            text(f"SELECT COUNT(*) FROM emailresult WHERE {where}"),
-            params,
+            _scope_filter(select(func.count()).select_from(EmailResult))
         ).scalar() or 0
         print(f"scope: {scope} -> {n} unknown rows")
         if args.dry_run or n == 0:
             print("[dry-run]" if args.dry_run else "nothing to do")
             return 0
         rows = db.execute(
-            text(f"UPDATE emailresult SET verdict = 'invalid' WHERE {where}"),
-            params,
+            _scope_filter(sa_update(EmailResult)).values(verdict="invalid")
         ).rowcount or 0
         db.commit()
         print(f"flipped {rows} rows from unknown -> invalid")
