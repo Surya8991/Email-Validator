@@ -30,6 +30,87 @@ _JOB_LIST_COLS = (
     Job.filename, Job.strategy, Job.error,
 )
 
+_VERDICT_KEYS = ("valid", "invalid", "risky", "unknown")
+
+
+def _per_user_verdict_stats() -> list[dict]:
+    """One JOIN GROUP BY user_id, verdict — returns sorted rows:
+        [{user_id, user_email, jobs, total, valid, invalid, risky, unknown}, ...]
+    Used by /jobs to render the per-user stats panel visible to everyone.
+    Heavier than the per-job verdicts query because it scans every
+    EmailResult; cap to top-30-by-total to keep page render cheap.
+    """
+    base = {k: 0 for k in _VERDICT_KEYS}
+    with Session(engine) as session:
+        # Per-user job + processed-emails counts (one query).
+        ujob_rows = session.execute(
+            select(Job.user_id, func.count(), func.coalesce(func.sum(Job.processed), 0))
+            .group_by(Job.user_id)
+        ).all()
+        per_user_jobs = {
+            int(uid): {"jobs": int(jc), "processed": int(em or 0)}
+            for uid, jc, em in ujob_rows if uid is not None
+        }
+        # Per-user verdict distribution (one JOIN query).
+        verdict_rows = session.execute(
+            select(Job.user_id, EmailResult.verdict, func.count())
+            .join(EmailResult, EmailResult.job_id == Job.id)
+            .group_by(Job.user_id, EmailResult.verdict)
+        ).all()
+        per_user_verdicts: dict[int, dict[str, int]] = {}
+        for uid, verdict, cnt in verdict_rows:
+            if uid is None:
+                continue
+            d = per_user_verdicts.setdefault(int(uid), dict(base))
+            if verdict in base:
+                d[verdict] = int(cnt)
+        # Resolve emails for the user_ids we have (one IN-query).
+        user_ids = list(per_user_jobs.keys())
+        if not user_ids:
+            return []
+        email_rows = session.execute(
+            select(User.id, User.email).where(User.id.in_(user_ids))  # type: ignore[attr-defined]
+        ).all()
+        emails = {int(uid): em for uid, em in email_rows}
+    out = []
+    for uid, jstats in per_user_jobs.items():
+        v = per_user_verdicts.get(uid, dict(base))
+        total = sum(v.values())
+        out.append({
+            "user_id": uid,
+            "user_email": emails.get(uid, "—"),
+            "jobs": jstats["jobs"],
+            "processed": jstats["processed"],
+            "total": total,
+            **v,
+        })
+    out.sort(key=lambda r: r["total"], reverse=True)
+    return out[:30]
+
+
+def _job_verdict_counts(session: Session, job_ids: list[int]) -> dict[int, dict[str, int]]:
+    """One batched GROUP BY job_id, verdict — returns
+    {job_id: {valid: N, invalid: N, risky: N, unknown: N}} with zeros filled.
+
+    Used by /jobs to render per-row verdict chips and by /jobs/{id} to render
+    the top summary card. Job.processed is total written; this query splits
+    that total by verdict. EmailResult.job_id already has an index, so the
+    GROUP BY is cheap even for 50 jobs at a time.
+    """
+    base = {k: 0 for k in _VERDICT_KEYS}
+    out: dict[int, dict[str, int]] = {jid: dict(base) for jid in job_ids}
+    if not job_ids:
+        return out
+    rows = session.execute(
+        select(EmailResult.job_id, EmailResult.verdict, func.count())
+        .where(EmailResult.job_id.in_(job_ids))  # type: ignore[attr-defined]
+        .group_by(EmailResult.job_id, EmailResult.verdict)
+    ).all()
+    for jid, verdict, cnt in rows:
+        if jid in out and verdict in base:
+            out[jid][verdict] = int(cnt)
+    return out
+
 
 def _dashboard_aggregates() -> dict:
     """Run the dashboard's COUNT queries. Cheap on warm Neon, slow when cold —
@@ -146,15 +227,44 @@ def _is_privileged(user: User) -> bool:
     return user.role in ("admin", "superadmin")
 
 
+def _cache_verdict_stats() -> dict:
+    """Total cache size + per-verdict counts. Drives the dashboard cards on
+    /cache (both admin and user views). One GROUP BY query keyed off the
+    indexed `verdict` column — cheap even on hundreds of thousands of rows.
+
+    Note: 'unknown' verdicts are intentionally NEVER cached (see
+    validator.py:34) so that count is always 0; we still surface the slot
+    for visual completeness.
+    """
+    out = {"total": 0, "valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
+    with Session(engine) as session:
+        rows = session.execute(
+            select(EmailCache.verdict, func.count()).group_by(EmailCache.verdict)
+        ).all()
+    for v, cnt in rows:
+        if v in out:
+            out[v] = int(cnt)
+        out["total"] += int(cnt)
+    return out
+
+
 @router.get("/cache", response_class=HTMLResponse)
 async def cache_browser(request: Request, current_user: User = Depends(require_auth)):
     # The EmailCache table is shared across all users by design. Plain users
     # see a scoped "Your Recent Validations" view (last 5 from their own
     # bulk jobs); admins / superadmins get the full global cache browser.
+    # Both surfaces get the verdict-count dashboard above the table.
     template = "cache.html" if _is_privileged(current_user) else "cache_user.html"
+    try:
+        cache_stats = await asyncio.wait_for(
+            asyncio.to_thread(_cache_verdict_stats), timeout=4.0,
+        )
+    except (TimeoutError, Exception):  # noqa: BLE001
+        cache_stats = {"total": 0, "valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
     return templates.TemplateResponse(request, template, {
         "active_page": "cache",
         "current_user": current_user,
+        "cache_stats": cache_stats,
     })
 
 
@@ -372,11 +482,14 @@ def _list_jobs_lightweight(
             stmt.order_by(Job.id.desc()).offset(offset).limit(_JOBS_PER_PAGE)
         ).all()
         total = session.execute(count_stmt).scalar() or 0
+        job_ids = [int(r[0]) for r in rows]
+        verdicts = _job_verdict_counts(session, job_ids)
     return (
         [
             {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
              "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
-             "user_id": r[8], "user_email": r[9]}
+             "user_id": r[8], "user_email": r[9],
+             "verdicts": verdicts.get(int(r[0]), {k: 0 for k in _VERDICT_KEYS})}
             for r in rows
         ],
         int(total),
@@ -407,9 +520,19 @@ async def jobs_list(
         )
     except (TimeoutError, Exception):  # noqa: BLE001
         jobs, total = [], 0
+    # Per-user verdict stats panel — visible to everyone, capped at top 30
+    # users by total processed so the query stays cheap even with many users.
+    # Wrapped in its own thread + timeout so a slow Neon doesn't sink /jobs.
+    try:
+        user_stats = await asyncio.wait_for(
+            asyncio.to_thread(_per_user_verdict_stats), timeout=4.0,
+        )
+    except (TimeoutError, Exception):  # noqa: BLE001
+        user_stats = []
     pages = max(1, (total + _JOBS_PER_PAGE - 1) // _JOBS_PER_PAGE)
     return templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs,
+        "user_stats": user_stats,
         "active_page": "jobs",
         "current_user": current_user,
         "status_filter": status_q,
@@ -475,15 +598,21 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
             .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
             .where(Job.id == job_id)
         ).first()
-        results = session.exec(
-            select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
-        ).all() if row else []
+        if row:
+            results = session.exec(
+                select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
+            ).all()
+            verdicts = _job_verdict_counts(session, [int(row[0])])[int(row[0])]
+        else:
+            results = []
+            verdicts = {k: 0 for k in _VERDICT_KEYS}
     if not row:
         return HTMLResponse("Job not found", status_code=404)
     job = {
         "id": row[0], "status": row[1], "total": row[2], "processed": row[3],
         "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
         "user_id": row[8], "user_email": row[9],
+        "verdicts": verdicts,
     }
     parsed = []
     for r in results:
