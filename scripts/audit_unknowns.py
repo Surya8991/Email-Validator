@@ -1,12 +1,12 @@
 """Report verdict x retry_count distribution across EmailResult.
 
-Used to verify the 3-strikes invariant: every row with retry_count >= STRIKES
+Used to verify the 2-strikes invariant: every row with retry_count >= STRIKES
 should have verdict='invalid' (never 'unknown'). If any row violates that,
 the count is printed loud so we can fix it.
 
 Usage:
     DATABASE_URL=postgres://... python scripts/audit_unknowns.py
-    DATABASE_URL=postgres://... python scripts/audit_unknowns.py --strikes 3
+    DATABASE_URL=postgres://... python scripts/audit_unknowns.py --strikes 2
 """
 import argparse
 import sys
@@ -22,9 +22,9 @@ from app.db import engine  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--strikes", type=int, default=3,
+    p.add_argument("--strikes", type=int, default=2,
                    help="Strikes threshold. Rows with retry_count >= strikes "
-                        "MUST have verdict='invalid' (default: 3)")
+                        "MUST have verdict='invalid' (default: 2)")
     args = p.parse_args()
 
     with Session(engine) as db:
@@ -44,7 +44,7 @@ def main() -> int:
         ), {"s": args.strikes}).scalar() or 0
         if stuck > 0:
             print(f"*** WARNING: {stuck} rows have retry_count >= {args.strikes} "
-                  f"but still verdict='unknown'. The 3-strikes invariant is violated.")
+                  f"but still verdict='unknown'. The 2-strikes invariant is violated.")
             print(f"    Fix with: UPDATE emailresult SET verdict='invalid' "
                   f"WHERE retry_count >= {args.strikes} AND verdict='unknown';")
             return 2
