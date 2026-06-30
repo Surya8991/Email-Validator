@@ -622,6 +622,7 @@ async def account_cleanup_page(request: Request, current_user: User = Depends(re
     return templates.TemplateResponse(request, "admin/account_cleanup.html", {
         **_admin_ctx("account-cleanup", current_user),
         "google_oauth_client_id": settings.google_oauth_client_id,
+        "google_sheets_target_id": settings.google_sheets_target_id,
     })
 
 
