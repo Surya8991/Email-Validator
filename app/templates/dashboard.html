@@ -9,17 +9,20 @@
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Overview of your email validation activity</p>
   </div>
 
-  <!-- Stat cards -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+  <!-- Stat cards (auto-refresh every 60s) -->
+  <div id="dash-stat-cards"
+    class="grid grid-cols-2 lg:grid-cols-4 gap-4"
+    hx-get="/" hx-trigger="every 60s"
+    hx-select="#dash-stat-cards" hx-swap="outerHTML">
     <div class="card p-4 space-y-1">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Validated</p>
       <p class="text-3xl font-bold text-gray-900 dark:text-white">{{ total_results | default(0) | int }}</p>
-      <p class="text-xs text-gray-400">all time, across all jobs</p>
+      <p class="text-xs text-gray-400">all-time results (EmailResult)</p>
     </div>
     <div class="card p-4 space-y-1">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cache Entries</p>
       <p class="text-3xl font-bold text-indigo-600 dark:text-indigo-400">{{ total_cache | default(0) | int }}</p>
-      <p class="text-xs text-gray-400">unique emails cached (30d)</p>
+      <p class="text-xs text-gray-400">deduped, 30d TTL (EmailCache)</p>
     </div>
     <div class="card p-4 space-y-1">
       <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cache Rate</p>
@@ -36,9 +39,15 @@
   <!-- Verdict distribution + quick validate -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-    <!-- Verdict distribution -->
-    <div class="card p-5 space-y-3">
-      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict Distribution</h2>
+    <!-- Verdict distribution (auto-refresh every 60s) -->
+    <div id="dash-verdict"
+      class="card p-5 space-y-3"
+      hx-get="/" hx-trigger="every 60s"
+      hx-select="#dash-verdict" hx-swap="outerHTML">
+      <div>
+        <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict Distribution</h2>
+        <p class="text-[10px] text-gray-400 mt-0.5">All-time across every job — sourced from EmailResult, includes unknowns (these are NOT in the cache table by design).</p>
+      </div>
       {% set total_v = (verdict_counts.get('valid',0) + verdict_counts.get('invalid',0) + verdict_counts.get('risky',0) + verdict_counts.get('unknown',0)) %}
       {% if total_v > 0 %}
       {% for v, color in [('valid','bg-green-500'),('invalid','bg-red-500'),('risky','bg-yellow-400'),('unknown','bg-gray-300 dark:bg-gray-600')] %}

@@ -19,10 +19,12 @@ from app.providers.registry import get_enabled_providers
 from app.templating import job_eta_seconds, templates
 
 # Short-lived in-memory cache for the dashboard's expensive aggregate queries.
-# 30s TTL is enough that consecutive loads (e.g. browser-tab reopen, navigation)
-# don't re-COUNT the whole tables, but fresh enough that numbers feel live.
+# 10s TTL — short enough that the dashboard's 60s htmx auto-refresh always
+# picks up fresh data (and dovetails with the /cache page's own 60s poll, so
+# numbers stay aligned), but long enough that a burst of navigation between
+# tabs doesn't re-COUNT the whole tables on every click.
 _DASHBOARD_CACHE: dict = {"ts": 0.0, "data": None}
-_DASHBOARD_TTL = 30.0
+_DASHBOARD_TTL = 10.0
 
 
 _JOB_LIST_COLS = (
