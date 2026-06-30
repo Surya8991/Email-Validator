@@ -7,6 +7,13 @@ name: Mark Job Unknowns Invalid
 # Trigger: gh workflow run mark_unknowns_invalid.yml -f job_id=79
 
 on:
+  # Hourly auto-drain for the legacy strike-3 stragglers (rows stuck at
+  # retry_count=2 / verdict='unknown' after PR #21 dropped strikes 3→2).
+  # The date guard below makes the schedule a no-op from 2026-07-01 on,
+  # so this is self-disabling — just leave the cron block in place. To
+  # extend, bump the AUTO_DRAIN_UNTIL value below.
+  schedule:
+    - cron: "20 * * * *"   # every hour at :20
   workflow_dispatch:
     inputs:
       job_id:
@@ -25,25 +32,50 @@ on:
         type: boolean
         default: false
 
+# Last day the hourly schedule actually runs anything. After this date
+# the cron-triggered runs see expired=true and exit clean without
+# touching the DB. Manual workflow_dispatch ignores the guard and
+# always runs.
+env:
+  AUTO_DRAIN_UNTIL: "2026-06-30"
+
 jobs:
   flip:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Check auto-drain expiry
+        id: drain
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            NOW=$(date -u +%Y-%m-%d)
+            if [ "$NOW" \> "$AUTO_DRAIN_UNTIL" ]; then
+              echo "Auto-drain ended on $AUTO_DRAIN_UNTIL (today is $NOW). Skipping."
+              echo "expired=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.drain.outputs.expired != 'true'
 
       - uses: actions/setup-python@v6
+        if: steps.drain.outputs.expired != 'true'
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
+        if: steps.drain.outputs.expired != 'true'
         run: pip install -r requirements.txt
 
       - name: Flip unknowns
+        if: steps.drain.outputs.expired != 'true'
         env:
           JOB_ID: ${{ inputs.job_id }}
-          MIN_RC: ${{ inputs.min_retry_count || '0' }}
+          # Scheduled runs always target retry_count >= 2 (the strike-2
+          # stragglers from the pre-PR-#21 retry workflows). Manual
+          # dispatches honor whatever min_retry_count the user passes.
+          MIN_RC: ${{ github.event_name == 'schedule' && '2' || (inputs.min_retry_count || '0') }}
           DRY_RUN: ${{ inputs.dry_run }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
