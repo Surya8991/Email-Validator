@@ -59,7 +59,7 @@ _PG_COLUMN_ADDS: list[tuple[str, str, str]] = [
     ("teammembership", "role", "VARCHAR DEFAULT 'member' NOT NULL"),
     ('"user"', "failed_login_count", "INTEGER DEFAULT 0 NOT NULL"),
     ('"user"', "locked_until", "TIMESTAMP"),
-    # Strike-count for the 3-strikes rule in scripts/retry_unknowns.py.
+    # Strike-count for the 2-strikes rule in scripts/retry_unknowns.py.
     ("emailresult", "retry_count", "INTEGER DEFAULT 0 NOT NULL"),
 ]
 

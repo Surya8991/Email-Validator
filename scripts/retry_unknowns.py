@@ -355,10 +355,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Comma-separated provider list (default: bouncify).")
     p.add_argument("--strategy", default=None,
                    help="Validation strategy (default: bouncify_only).")
-    p.add_argument("--strikes", type=int, default=_env_int("UNKNOWN_STRIKES", 3),
+    p.add_argument("--strikes", type=int, default=_env_int("UNKNOWN_STRIKES", 2),
                    help="After this many failed retries an email's verdict flips "
                         "from 'unknown' to 'invalid' so it leaves the retry pool "
-                        "(default: 3, env: UNKNOWN_STRIKES).")
+                        "(default: 2, env: UNKNOWN_STRIKES).")
     p.add_argument("--bucket", type=int, default=None,
                    help="Hash-bucket index this run processes (0-based). Combined "
                         "with --bucket-of to fan a single retry sweep across N "

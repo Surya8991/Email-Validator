@@ -509,7 +509,7 @@ async def admin_retry_unknowns(
     providers: str = "bouncify",
     strategy: str = "bouncify_only",
     job_id: int | None = None,
-    strikes: int = 3,
+    strikes: int = 2,
     num_buckets: int = 15,
     current_user: User = Depends(require_admin),
 ):
