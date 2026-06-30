@@ -27,11 +27,15 @@
           <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Role</th>
           <th class="text-right px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Jobs</th>
           <th class="text-right px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Emails processed</th>
+          <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Verdict mix</th>
           <th class="text-left px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last login</th>
+          <th class="text-right px-5 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Download</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for u in users %}
+        {% set vc = verdict_counts.get(u.id, {}) %}
+        {% set vt = (vc.get('valid', 0) + vc.get('invalid', 0) + vc.get('risky', 0) + vc.get('unknown', 0)) %}
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
           <td class="px-5 py-3.5">
             <div class="flex items-center gap-3">
@@ -54,13 +58,38 @@
           <td class="px-5 py-3.5 text-right font-mono text-gray-700 dark:text-gray-300">
             {{ emails_processed.get(u.id, 0) }}
           </td>
+          <td class="px-5 py-3.5">
+            {% if vt > 0 %}
+            <div class="flex flex-col gap-1.5 min-w-[180px]">
+              <div class="flex h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                {% if vc.get('valid', 0) %}<div class="bg-green-500" style="width: {{ (vc.valid / vt * 100) }}%"></div>{% endif %}
+                {% if vc.get('invalid', 0) %}<div class="bg-red-500" style="width: {{ (vc.invalid / vt * 100) }}%"></div>{% endif %}
+                {% if vc.get('risky', 0) %}<div class="bg-amber-400" style="width: {{ (vc.risky / vt * 100) }}%"></div>{% endif %}
+                {% if vc.get('unknown', 0) %}<div class="bg-gray-400" style="width: {{ (vc.unknown / vt * 100) }}%"></div>{% endif %}
+              </div>
+              <div class="flex gap-1.5 text-[10px] font-medium">
+                {% if vc.get('valid', 0) %}<span class="text-green-700 dark:text-green-300">✓{{ vc.valid }}</span>{% endif %}
+                {% if vc.get('invalid', 0) %}<span class="text-red-600 dark:text-red-300">✗{{ vc.invalid }}</span>{% endif %}
+                {% if vc.get('risky', 0) %}<span class="text-amber-600 dark:text-amber-300">⚠{{ vc.risky }}</span>{% endif %}
+                {% if vc.get('unknown', 0) %}<span class="text-gray-500 dark:text-gray-400">?{{ vc.unknown }}</span>{% endif %}
+              </div>
+            </div>
+            {% else %}<span class="text-gray-300">—</span>{% endif %}
+          </td>
           <td class="px-5 py-3.5 text-gray-500 dark:text-gray-400 text-xs">
             {{ u.last_login | ist('%b %d, %Y %H:%M') if u.last_login else '—' }}
+          </td>
+          <td class="px-5 py-3.5 text-right text-xs">
+            {% if vt > 0 %}
+            <a href="/admin/users/{{ u.id }}/emails.csv"
+              class="text-indigo-600 hover:text-indigo-700 hover:underline font-medium"
+              title="Download every email this user has validated">⬇ CSV</a>
+            {% else %}<span class="text-gray-300">—</span>{% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="px-5 py-10 text-center text-sm text-gray-400">No users yet.</td>
+          <td colspan="7" class="px-5 py-10 text-center text-sm text-gray-400">No users yet.</td>
         </tr>
         {% endfor %}
       </tbody>
