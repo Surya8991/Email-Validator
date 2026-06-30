@@ -2,6 +2,9 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+<!-- Chart.js must load BEFORE the daily-chart card's inline init, both
+     on first page load and on every htmx swap. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <div class="max-w-5xl mx-auto">
 
   <div class="mb-6">
@@ -9,8 +12,11 @@
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Platform-wide metrics and quick actions</p>
   </div>
 
-  <!-- Top metrics — 4 cards -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+  <!-- Top metrics — 4 cards (auto-refresh every 60s) -->
+  <div id="admin-stat-cards"
+    class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6"
+    hx-get="/admin" hx-trigger="every 60s"
+    hx-select="#admin-stat-cards" hx-swap="outerHTML">
     <div class="card p-5">
       <div class="flex items-center justify-between mb-2">
         <span class="text-2xl">✅</span>
@@ -199,45 +205,56 @@
     </div>
   </div>
 
-  <!-- Daily trend chart -->
-  <div class="card p-5">
-    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Daily validations — last 14 days</h3>
+  <!-- Daily trend chart (auto-refresh every 5min) -->
+  <div id="admin-daily-chart"
+    class="card p-5"
+    hx-get="/admin" hx-trigger="every 300s"
+    hx-select="#admin-daily-chart" hx-swap="outerHTML">
+    <div class="flex items-baseline justify-between mb-4">
+      <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Daily validations — last 14 days</h3>
+      <span class="text-[10px] text-gray-400">EmailResult · refresh 5m</span>
+    </div>
     <canvas id="dailyChart" height="70"></canvas>
+    <script>
+      // Inline init so each htmx swap of this card re-runs with fresh
+      // chart_data_json. Chart.js leaks if we new Chart() on a canvas
+      // that already has one — destroy any existing chart first.
+      (function() {
+        const canvas = document.getElementById('dailyChart');
+        if (!canvas || typeof Chart === 'undefined') return;
+        const existing = Chart.getChart(canvas);
+        if (existing) existing.destroy();
+        const data = {{ chart_data_json | safe }};
+        const labels = data.daily_stats.map(d => d.date.slice(5));
+        const isDark = document.documentElement.classList.contains('dark');
+        const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+        const tickColor = isDark ? '#6b7280' : '#9ca3af';
+        const colors = { valid:'#22c55e', invalid:'#ef4444', risky:'#f59e0b', unknown:'#d1d5db' };
+        new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: ['valid','invalid','risky','unknown'].map(v => ({
+              label: v,
+              data: data.daily_stats.map(d => d[v] || 0),
+              backgroundColor: colors[v],
+              borderRadius: 4,
+            }))
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, color: tickColor } }
+            },
+            scales: {
+              x: { stacked: true, grid: { color: gridColor, display: false }, ticks: { font: { size: 10 }, color: tickColor } },
+              y: { stacked: true, grid: { color: gridColor }, ticks: { font: { size: 10 }, color: tickColor } }
+            }
+          }
+        });
+      })();
+    </script>
   </div>
 
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-(function() {
-  const data = {{ chart_data_json | safe }};
-  const labels = data.daily_stats.map(d => d.date.slice(5));
-  const isDark = document.documentElement.classList.contains('dark');
-  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const tickColor = isDark ? '#6b7280' : '#9ca3af';
-  const colors = { valid:'#22c55e', invalid:'#ef4444', risky:'#f59e0b', unknown:'#d1d5db' };
-  new Chart(document.getElementById('dailyChart'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: ['valid','invalid','risky','unknown'].map(v => ({
-        label: v,
-        data: data.daily_stats.map(d => d[v] || 0),
-        backgroundColor: colors[v],
-        borderRadius: 4,
-      }))
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, color: tickColor } }
-      },
-      scales: {
-        x: { stacked: true, grid: { color: gridColor, display: false }, ticks: { font: { size: 10 }, color: tickColor } },
-        y: { stacked: true, grid: { color: gridColor }, ticks: { font: { size: 10 }, color: tickColor } }
-      }
-    }
-  });
-})();
-</script>
 {% endblock %}
