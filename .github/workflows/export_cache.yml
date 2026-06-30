@@ -1,0 +1,61 @@
+name: Export Cache CSV
+
+# Server-side export of the EmailCache table that bypasses Vercel's 10s
+# function ceiling. Runs the column-projected query on a GHA runner,
+# writes the CSV to disk, uploads as a build artifact you can download
+# from the run's summary page.
+#
+# Trigger:
+#   gh workflow run export_cache.yml                          # full table
+#   gh workflow run export_cache.yml -f verdict=valid         # filter
+#   gh workflow run export_cache.yml -f q=@gmail.com          # substring
+#
+# After the run finishes (~30-60 s on ~50k rows), open the run in the
+# Actions tab → Artifacts → cache-export → download the .csv.
+
+on:
+  workflow_dispatch:
+    inputs:
+      verdict:
+        description: "Filter to one verdict (valid | invalid | risky), blank = all"
+        required: false
+        type: string
+        default: ""
+      q:
+        description: "Substring match on the email column, blank = all"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run export
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          VERDICT: ${{ inputs.verdict }}
+          Q: ${{ inputs.q }}
+        run: |
+          ARGS=(--out cache-export.csv)
+          if [ -n "$VERDICT" ]; then ARGS+=(--verdict "$VERDICT"); fi
+          if [ -n "$Q" ]; then ARGS+=(--q "$Q"); fi
+          python scripts/export_cache.py "${ARGS[@]}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-export
+          path: cache-export.csv
+          retention-days: 7

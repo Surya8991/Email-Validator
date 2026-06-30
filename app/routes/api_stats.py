@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
@@ -100,60 +100,57 @@ def export_cache(
     verdict: str = "",
     current_user: User = Depends(require_auth),
 ):
-    """Stream the cache table as CSV. Honors the same `q` + `verdict`
-    filters as the browser. Streams row-by-row so Vercel can start
-    sending bytes before all 50k+ rows are serialized — without this
-    the function timed out at 10s on the prod cache size.
+    """Export the cache table as CSV. Honors the same `q` + `verdict`
+    filters as the browser.
 
     Column projection drops `provider_data` (a fat JSON blob that
     isn't part of the CSV anyway) so the DB only fetches the 6 fields
-    we actually write."""
+    we actually write — that's what keeps the 50k-row export under
+    Vercel's 10s ceiling. Previous attempt at StreamingResponse +
+    yield_per returned a header-only blank file on Vercel's ASGI
+    runtime; non-streaming + projection is the safer shape.
+
+    For exports too large for the 10s budget, use the
+    .github/workflows/export_cache.yml workflow — runs on GHA with no
+    timeout and uploads the CSV as an artifact."""
     _require_admin_cache(current_user)
     verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_EXPORT_VERDICTS else ""
 
-    def _row_stream():
-        # First yield the CSV header.
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow([
-            "email", "verdict", "providers_used", "strategy",
-            "validated_at", "expires_at",
-        ])
-        yield buf.getvalue()
-
-        # Column-projected query — never loads EmailCache.provider_data.
-        stmt = (
-            select(
-                EmailCache.email, EmailCache.verdict, EmailCache.providers_used,
-                EmailCache.strategy, EmailCache.validated_at, EmailCache.expires_at,
-            )
-            .order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+    # Column-projected query — never loads EmailCache.provider_data.
+    stmt = (
+        select(
+            EmailCache.email, EmailCache.verdict, EmailCache.providers_used,
+            EmailCache.strategy, EmailCache.validated_at, EmailCache.expires_at,
         )
-        if q:
-            stmt = stmt.where(EmailCache.email.contains(q))
-        if verdict_q:
-            stmt = stmt.where(EmailCache.verdict == verdict_q)
+        .order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+    )
+    if q:
+        stmt = stmt.where(EmailCache.email.contains(q))
+    if verdict_q:
+        stmt = stmt.where(EmailCache.verdict == verdict_q)
+    with Session(engine) as session:
+        rows = session.execute(stmt).all()
 
-        # New session for the streaming generator (the request's own
-        # session may already be closed by the time the stream runs).
-        with Session(engine) as session:
-            for row in session.execute(stmt).yield_per(1000):
-                email, vd, providers_used, strategy, validated_at, expires_at = row
-                buf = io.StringIO()
-                csv.writer(buf).writerow([
-                    email or "",
-                    vd or "",
-                    providers_used or "",
-                    strategy or "",
-                    validated_at.isoformat() if validated_at else "",
-                    expires_at.isoformat() if expires_at else "",
-                ])
-                yield buf.getvalue()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "email", "verdict", "providers_used", "strategy",
+        "validated_at", "expires_at",
+    ])
+    for email, vd, providers_used, strategy, validated_at, expires_at in rows:
+        writer.writerow([
+            email or "",
+            vd or "",
+            providers_used or "",
+            strategy or "",
+            validated_at.isoformat() if validated_at else "",
+            expires_at.isoformat() if expires_at else "",
+        ])
 
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     filename = f"email-cache-{stamp}.csv"
-    return StreamingResponse(
-        _row_stream(),
+    return Response(
+        content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
