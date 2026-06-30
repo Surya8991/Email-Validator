@@ -91,7 +91,7 @@
           async function retryUnknowns(btn) {
             const ok = confirm(
               "Fan out retry_unknowns across 15 parallel workflow runs " +
-              "(3 in flight, 12 queued; ~500 emails each → ~7,500 total). " +
+              "(up to 10 in flight, rest queued; ~500 emails each → ~7,500 total). " +
               "Bouncify credit per email — confirm?"
             );
             if (!ok) return;

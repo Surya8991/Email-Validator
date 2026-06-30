@@ -75,6 +75,41 @@ _DISPATCH_HINTS = {
 }
 
 
+async def _count_queued_workflow_runs(
+    client: httpx.AsyncClient, workflow_file: str
+) -> int:
+    """Count GitHub Actions runs of `workflow_file` in `queued` state
+    (= dispatched but not yet started — workers are full or the
+    concurrency group is waiting). Best-effort: returns 0 on any
+    error so a transient GitHub API hiccup never blocks dispatch.
+    """
+    if not settings.github_pat or not settings.github_repo:
+        return 0
+    try:
+        owner, repo = settings.github_repo.split("/", 1)
+    except ValueError:
+        return 0
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}/"
+        f"actions/workflows/{workflow_file}/runs?status=queued&per_page=1"
+    )
+    try:
+        resp = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.github_pat}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=4.0,
+        )
+        if resp.status_code != 200:
+            return 0
+        return int(resp.json().get("total_count", 0))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 async def _trigger_github_actions(
     job_id: int,
     cache_ttl_days: int | None = None,
@@ -97,6 +132,20 @@ async def _trigger_github_actions(
         inputs["triggered_by"] = triggered_by
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
+            # Upstream queue gate: refuse if too many runs are already
+            # waiting. Workflow concurrency caps in-flight at 3; this
+            # caps the wait line so the queue doesn't grow unboundedly.
+            cap = settings.max_queued_workflow_runs
+            if cap > 0:
+                queued = await _count_queued_workflow_runs(client, "bulk_process.yml")
+                if queued >= cap:
+                    msg = (
+                        f"GitHub Actions queue is full: {queued} bulk runs are "
+                        f"already waiting (cap: {cap}). Wait for some to start "
+                        f"before submitting more."
+                    )
+                    logger.warning("dispatch refused for job %s: %s", job_id, msg)
+                    return False, msg
             resp = await client.post(
                 url,
                 headers={
@@ -199,6 +248,23 @@ async def create_bulk_job(
                 f"pending emails ({active_emails} already in flight). Wait for one to finish."
             ),
         )
+
+    # Global GHA queue cap: refuse before creating a Job row so the user
+    # doesn't end up with a leftover 'failed' job they have to clean up.
+    # The same check inside _trigger_github_actions stays as a backstop
+    # for the race where the queue fills between this check and dispatch.
+    cap = settings.max_queued_workflow_runs
+    if cap > 0:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            queued = await _count_queued_workflow_runs(client, "bulk_process.yml")
+        if queued >= cap:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"GitHub Actions queue is full: {queued} bulk runs are already "
+                    f"waiting (cap: {cap}). Wait for some to start before submitting more."
+                ),
+            )
 
     upload_dir = _upload_dir()
     os.makedirs(upload_dir, exist_ok=True)

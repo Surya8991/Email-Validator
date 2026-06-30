@@ -56,6 +56,7 @@ python -m uvicorn app.main:app --reload
    | `MAX_BULK_EMAILS` | `1000` | Per-CSV upload cap. 400 if exceeded. `0` disables. |
    | `MAX_USER_ACTIVE_JOBS` | `4` | Per-user queued+running jobs cap. 429 if exceeded. |
    | `MAX_USER_ACTIVE_EMAILS` | `2000` | Per-user sum-of-pending-emails cap. 429 if exceeded. |
+   | `MAX_QUEUED_WORKFLOW_RUNS` | `10` | Cap on GitHub Actions runs sitting in `queued` state. `/api/bulk` and `/admin/retry-unknowns` return 429 when a new dispatch would push the queue past this. Workflow concurrency separately caps in-flight runs at 3. `0` disables. |
    | `UNKNOWN_STRIKES` | `3` | After this many failed retries, `EmailResult.verdict` flips from `unknown` to `invalid` (see Retry sweep below). |
 
 3. Set these **GitHub Actions secrets** so the bulk + retry workers hit the same DB/provider as Vercel: `DATABASE_URL`, `BOUNCIFY_API_KEY`, `JOB_CALLBACK_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SUPERADMIN_EMAIL`.
@@ -76,7 +77,7 @@ python -m uvicorn app.main:app --reload
 
 6. **DB init runs via GitHub Actions, not Vercel.** Every push to `main` triggers `db_init.yml` which runs `create_db_tables`, admin bootstrap, and team-owner backfill against Neon directly. Vercel cold starts no longer do any DB ops — this keeps them under the 10s Hobby limit even on the first request after a Neon idle-pause.
 
-6. The `bulk_process` and `retry_unknowns` workflows are both capped at **3 concurrent runs** via a 3-bucket `concurrency:` group (Bouncify rate limits start producing `unknown` past ~3 parallel workers). A 4th dispatch waits in GitHub's own queue until a slot frees up.
+6. The `bulk_process` and `retry_unknowns` workflows are both capped at **10 concurrent runs** via a 10-bucket `concurrency:` group keyed on the last digit of `job_id` / `bucket`. An 11th dispatch waits in GitHub's own queue until a slot frees up. Bouncify rate limits may push the `unknown` count up at this concurrency on lower tiers — re-resolve those via the retry-unknowns sweep.
 
 ---
 
