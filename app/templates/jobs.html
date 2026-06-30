@@ -104,6 +104,15 @@
               </div>
               <span class="text-xs">{{ job.processed }}/{{ job.total }}</span>
             </div>
+            {% set v = job.verdicts or {} %}
+            {% if (v.valid or 0) + (v.invalid or 0) + (v.risky or 0) + (v.unknown or 0) > 0 %}
+            <div class="flex items-center gap-1.5 mt-1.5 text-[10px] font-medium">
+              {% if v.valid %}<span class="text-green-700 dark:text-green-300" title="valid">✓{{ v.valid }}</span>{% endif %}
+              {% if v.invalid %}<span class="text-red-600 dark:text-red-300" title="invalid">✗{{ v.invalid }}</span>{% endif %}
+              {% if v.risky %}<span class="text-amber-600 dark:text-amber-300" title="risky">⚠{{ v.risky }}</span>{% endif %}
+              {% if v.unknown %}<span class="text-gray-500 dark:text-gray-400" title="unknown">?{{ v.unknown }}</span>{% endif %}
+            </div>
+            {% endif %}
             {% else %}-{% endif %}
           </td>
           <td class="px-4 py-3">

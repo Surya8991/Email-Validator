@@ -652,25 +652,39 @@ async def admin_cache_lookup(
     return {"verdicts": verdicts}
 
 
+_USAGE_VERDICT_KEYS = ("valid", "invalid", "risky", "unknown")
+
+
 @router.get("/usage", response_class=HTMLResponse)
 async def admin_usage(request: Request, current_user: User = Depends(require_admin)):
     with Session(engine) as db:
         users = db.exec(select(User).order_by(User.email)).all()
 
-        # Jobs per user
+        # Per-user aggregates batched into 3 queries (was N+1: 2 per user).
         job_counts: dict[int, int] = {}
         emails_processed: dict[int, int] = {}
-        for u in users:
-            if u.id is None:
+        user_job_rows = db.execute(
+            select(Job.user_id, func.count(), func.coalesce(func.sum(Job.processed), 0))
+            .group_by(Job.user_id)
+        ).all()
+        for uid, jcount, emails in user_job_rows:
+            if uid is None:
                 continue
-            count = db.exec(
-                select(func.count()).select_from(Job).where(Job.user_id == u.id)
-            ).one() or 0
-            job_counts[u.id] = count
-            total_emails = db.exec(
-                select(func.sum(Job.processed)).where(Job.user_id == u.id)
-            ).one() or 0
-            emails_processed[u.id] = total_emails
+            job_counts[uid] = int(jcount)
+            emails_processed[uid] = int(emails or 0)
+
+        # Per-user verdict distribution across all their EmailResult rows.
+        # One JOIN GROUP BY beats per-user round-trips even on small fleets.
+        empty = {k: 0 for k in _USAGE_VERDICT_KEYS}
+        verdict_counts: dict[int, dict[str, int]] = {u.id: dict(empty) for u in users if u.id}
+        verdict_rows = db.execute(
+            select(Job.user_id, EmailResult.verdict, func.count())
+            .join(EmailResult, EmailResult.job_id == Job.id)
+            .group_by(Job.user_id, EmailResult.verdict)
+        ).all()
+        for uid, verdict, cnt in verdict_rows:
+            if uid in verdict_counts and verdict in empty:
+                verdict_counts[uid][verdict] = int(cnt)
 
         # Provider usage totals
         usage_rows = db.exec(
@@ -683,6 +697,7 @@ async def admin_usage(request: Request, current_user: User = Depends(require_adm
         "users": users,
         "job_counts": job_counts,
         "emails_processed": emails_processed,
+        "verdict_counts": verdict_counts,
         "provider_totals": provider_totals,
     })
 
@@ -727,6 +742,63 @@ def admin_usage_export(current_user: User = Depends(require_admin)):
         content=buf.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="usage-{stamp}.csv"'},
+    )
+
+
+_USER_EMAILS_VERDICTS = {"all", "valid", "invalid", "risky", "unknown"}
+
+
+@router.get("/users/{user_id}/emails.csv")
+def admin_user_emails_export(
+    user_id: int,
+    verdict: str = "all",
+    current_user: User = Depends(require_admin),
+):
+    """Download every EmailResult the given user has accumulated across all
+    their bulk jobs. Admin-only — regular users use /api/bulk/{id}/download
+    for their own per-job results.
+
+    Columns: email, verdict, job_id, job_filename, created_at.
+    Optional ?verdict=valid|invalid|risky|unknown filter narrows by verdict.
+    """
+    if verdict not in _USER_EMAILS_VERDICTS:
+        raise HTTPException(status_code=400, detail="Invalid verdict filter.")
+    with Session(engine) as db:
+        owner = db.get(User, user_id)
+        if not owner:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # int(user_id) is FastAPI-validated already; explicit cast keeps the
+        # CodeQL taint analyzer quiet and matches the rest of the codebase.
+        stmt = (
+            select(
+                EmailResult.email, EmailResult.verdict,
+                EmailResult.job_id, Job.filename, EmailResult.created_at,
+            )
+            .join(Job, Job.id == EmailResult.job_id)
+            .where(Job.user_id == int(user_id))
+            .order_by(EmailResult.job_id.desc(), EmailResult.id.asc())  # type: ignore[arg-type]
+        )
+        if verdict != "all":
+            stmt = stmt.where(EmailResult.verdict == verdict)
+        rows = db.execute(stmt).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["email", "verdict", "job_id", "job_filename", "created_at"])
+    for em, v, jid, fname, created in rows:
+        writer.writerow([
+            em or "", v or "", jid or "",
+            fname or "",
+            created.isoformat() if created else "",
+        ])
+    safe_owner = (owner.email or f"user{user_id}").replace("@", "-at-").replace("/", "_")
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    fname = f"{safe_owner}-emails{'-' + verdict if verdict != 'all' else ''}-{stamp}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 

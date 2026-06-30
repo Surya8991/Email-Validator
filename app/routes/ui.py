@@ -30,6 +30,32 @@ _JOB_LIST_COLS = (
     Job.filename, Job.strategy, Job.error,
 )
 
+_VERDICT_KEYS = ("valid", "invalid", "risky", "unknown")
+
+
+def _job_verdict_counts(session: Session, job_ids: list[int]) -> dict[int, dict[str, int]]:
+    """One batched GROUP BY job_id, verdict — returns
+    {job_id: {valid: N, invalid: N, risky: N, unknown: N}} with zeros filled.
+
+    Used by /jobs to render per-row verdict chips and by /jobs/{id} to render
+    the top summary card. Job.processed is total written; this query splits
+    that total by verdict. EmailResult.job_id already has an index, so the
+    GROUP BY is cheap even for 50 jobs at a time.
+    """
+    base = {k: 0 for k in _VERDICT_KEYS}
+    out: dict[int, dict[str, int]] = {jid: dict(base) for jid in job_ids}
+    if not job_ids:
+        return out
+    rows = session.execute(
+        select(EmailResult.job_id, EmailResult.verdict, func.count())
+        .where(EmailResult.job_id.in_(job_ids))  # type: ignore[attr-defined]
+        .group_by(EmailResult.job_id, EmailResult.verdict)
+    ).all()
+    for jid, verdict, cnt in rows:
+        if jid in out and verdict in base:
+            out[jid][verdict] = int(cnt)
+    return out
+
 
 def _dashboard_aggregates() -> dict:
     """Run the dashboard's COUNT queries. Cheap on warm Neon, slow when cold —
@@ -372,11 +398,14 @@ def _list_jobs_lightweight(
             stmt.order_by(Job.id.desc()).offset(offset).limit(_JOBS_PER_PAGE)
         ).all()
         total = session.execute(count_stmt).scalar() or 0
+        job_ids = [int(r[0]) for r in rows]
+        verdicts = _job_verdict_counts(session, job_ids)
     return (
         [
             {"id": r[0], "status": r[1], "total": r[2], "processed": r[3],
              "created_at": r[4], "filename": r[5], "strategy": r[6], "error": r[7],
-             "user_id": r[8], "user_email": r[9]}
+             "user_id": r[8], "user_email": r[9],
+             "verdicts": verdicts.get(int(r[0]), {k: 0 for k in _VERDICT_KEYS})}
             for r in rows
         ],
         int(total),
@@ -475,15 +504,21 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
             .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
             .where(Job.id == job_id)
         ).first()
-        results = session.exec(
-            select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
-        ).all() if row else []
+        if row:
+            results = session.exec(
+                select(EmailResult).where(EmailResult.job_id == job_id).limit(200)
+            ).all()
+            verdicts = _job_verdict_counts(session, [int(row[0])])[int(row[0])]
+        else:
+            results = []
+            verdicts = {k: 0 for k in _VERDICT_KEYS}
     if not row:
         return HTMLResponse("Job not found", status_code=404)
     job = {
         "id": row[0], "status": row[1], "total": row[2], "processed": row[3],
         "created_at": row[4], "filename": row[5], "strategy": row[6], "error": row[7],
         "user_id": row[8], "user_email": row[9],
+        "verdicts": verdicts,
     }
     parsed = []
     for r in results:
