@@ -29,6 +29,45 @@ _FREE_PROVIDERS = {
     "tutanota.com", "zohomail.com", "yandex.com", "mail.ru",
 }
 
+# Common typo domains for the major free-mail providers — single/
+# transposed-letter mistakes that will never resolve to a working MX.
+# Short-circuit these in `verify()` BEFORE the DNS / SMTP / external-API
+# path so we don't burn Bouncify credits on them.
+#
+# Curated for high precision (zero false positives). NOT included:
+#   - ymail.com (legitimate Yahoo Mail alias)
+#   - googlemail.com (legitimate Google domain)
+#   - mail.com, email.com (legitimate free providers)
+#
+# Add new entries here as you spot them in production. The runtime
+# check is O(1) set lookup, so the list can grow freely.
+_TYPO_DOMAINS = {
+    # gmail.com typos
+    "gmai.com", "gmial.com", "gmaill.com", "gmal.com", "gnail.com",
+    "gmail.con", "gmail.co", "gmail.cm", "gmail.coom", "gmail.om",
+    "gmsil.com", "gmali.com", "gemail.com", "gmaal.com", "gmaul.com",
+    # yahoo.com typos
+    "yaho.com", "yhaoo.com", "yhoo.com", "yahooo.com", "yahoo.con",
+    "yahoo.cm", "gahoo.com", "gahooo.com", "yahho.com", "yaoo.com",
+    "yahoo.om", "yahoocom", "yhoo.co",
+    # hotmail.com typos
+    "hotnail.com", "hotmial.com", "hotmaill.com", "hotamil.com",
+    "hotmail.con", "hotmail.cm", "hotmali.com", "hotmail.om",
+    "hotmal.com", "hotmail.co",
+    # outlook.com typos
+    "outlok.com", "outloook.com", "outloo.com", "outllok.com",
+    "outlook.con", "outlok.co", "outloook.con", "outlook.om",
+    "outlock.com", "outloook.co",
+    # icloud.com typos
+    "iclod.com", "icoud.com", "icloud.con", "icould.com",
+    "icloud.cm", "icloud.om", "icoud.co", "iclooud.com",
+    # aol.com typos
+    "aol.con", "aoll.com", "aol.cm", "aol.om",
+    # live.com / msn.com / proton typos
+    "live.con", "live.cm", "msn.con",
+    "proton.con", "protonmail.con", "protomail.com",
+}
+
 # Cache catch-all domains to avoid repeated SMTP probes
 _CATCH_ALL_CACHE: dict[str, bool] = {}
 
@@ -52,6 +91,16 @@ class LocalProvider:
         is_disposable = domain in _DISPOSABLE
         is_role = local_part.lower() in _ROLE_PREFIXES
         is_free = domain in _FREE_PROVIDERS
+
+        # Short-circuit known typo domains BEFORE any DNS / SMTP / paid
+        # API call. Saves the Bouncify credit on garbage like
+        # `someone@gnail.com` / `foo@gahooo.com`.
+        if domain in _TYPO_DOMAINS:
+            return ProviderResult(
+                status="invalid", sub_status="typo_domain",
+                is_role=is_role, is_free=False, mx_found=False,
+                raw={"domain": domain, "reason": "common typo of a major free-mail provider"},
+            )
 
         if is_disposable:
             return ProviderResult(

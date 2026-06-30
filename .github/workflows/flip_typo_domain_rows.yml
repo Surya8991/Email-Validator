@@ -1,0 +1,46 @@
+name: Flip Typo-Domain Rows
+
+# One-off / on-demand: backfill every existing EmailResult + EmailCache
+# row whose domain is in the typo blocklist (gnail.com / gahooo.com /
+# hotnail.com / etc.) to verdict='invalid'. Future validations are
+# short-circuited at the LocalProvider level (no API call).
+#
+# Trigger:
+#   gh workflow run flip_typo_domain_rows.yml
+#   gh workflow run flip_typo_domain_rows.yml -f dry_run=true   # preview only
+#
+# Idempotent — the WHERE clause skips rows already marked invalid, so
+# re-running after a successful sweep does no work.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print row counts without updating"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  flip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Flip typo-domain rows
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=()
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          python scripts/flip_typo_domain_rows.py "${ARGS[@]}"
