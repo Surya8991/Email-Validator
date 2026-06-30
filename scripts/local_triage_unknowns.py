@@ -34,7 +34,6 @@ from sqlmodel import Session  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.providers.local import LocalProvider  # noqa: E402
 
-
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "20"))
 PROGRESS_EVERY = int(os.getenv("PROGRESS_EVERY", "200"))
 
