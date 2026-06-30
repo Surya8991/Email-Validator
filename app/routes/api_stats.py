@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
@@ -100,37 +100,60 @@ def export_cache(
     verdict: str = "",
     current_user: User = Depends(require_auth),
 ):
-    """Stream the cache table as CSV. Honors the same `q` + `verdict` filters as the browser."""
+    """Stream the cache table as CSV. Honors the same `q` + `verdict`
+    filters as the browser. Streams row-by-row so Vercel can start
+    sending bytes before all 50k+ rows are serialized — without this
+    the function timed out at 10s on the prod cache size.
+
+    Column projection drops `provider_data` (a fat JSON blob that
+    isn't part of the CSV anyway) so the DB only fetches the 6 fields
+    we actually write."""
     _require_admin_cache(current_user)
     verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_EXPORT_VERDICTS else ""
-    with Session(engine) as session:
-        query = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
-        if q:
-            query = query.where(EmailCache.email.contains(q))
-        if verdict_q:
-            query = query.where(EmailCache.verdict == verdict_q)
-        rows = session.exec(query).all()
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([
-        "email", "verdict", "providers_used", "strategy",
-        "validated_at", "expires_at",
-    ])
-    for r in rows:
+    def _row_stream():
+        # First yield the CSV header.
+        buf = io.StringIO()
+        writer = csv.writer(buf)
         writer.writerow([
-            r.email,
-            r.verdict,
-            r.providers_used,
-            r.strategy,
-            r.validated_at.isoformat() if r.validated_at else "",
-            r.expires_at.isoformat() if r.expires_at else "",
+            "email", "verdict", "providers_used", "strategy",
+            "validated_at", "expires_at",
         ])
+        yield buf.getvalue()
+
+        # Column-projected query — never loads EmailCache.provider_data.
+        stmt = (
+            select(
+                EmailCache.email, EmailCache.verdict, EmailCache.providers_used,
+                EmailCache.strategy, EmailCache.validated_at, EmailCache.expires_at,
+            )
+            .order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+        )
+        if q:
+            stmt = stmt.where(EmailCache.email.contains(q))
+        if verdict_q:
+            stmt = stmt.where(EmailCache.verdict == verdict_q)
+
+        # New session for the streaming generator (the request's own
+        # session may already be closed by the time the stream runs).
+        with Session(engine) as session:
+            for row in session.execute(stmt).yield_per(1000):
+                email, vd, providers_used, strategy, validated_at, expires_at = row
+                buf = io.StringIO()
+                csv.writer(buf).writerow([
+                    email or "",
+                    vd or "",
+                    providers_used or "",
+                    strategy or "",
+                    validated_at.isoformat() if validated_at else "",
+                    expires_at.isoformat() if expires_at else "",
+                ])
+                yield buf.getvalue()
 
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     filename = f"email-cache-{stamp}.csv"
-    return Response(
-        content=buf.getvalue(),
+    return StreamingResponse(
+        _row_stream(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
