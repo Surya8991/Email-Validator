@@ -10,7 +10,7 @@
     </div>
     <div id="ttl-indicator"
       class="shrink-0 text-xs bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-3 py-1.5 rounded-lg font-medium">
-      Cache: <span id="ttl-label">30 days</span>
+      Cache: <span id="ttl-label">1 year</span>
       <a href="/settings" class="ml-1.5 opacity-60 hover:opacity-100 transition">change</a>
     </div>
   </div>
@@ -154,7 +154,7 @@
         </div>
 
         <input type="hidden" name="providers" id="bulk-providers" value="{{ enabled_providers | join(',') }}"/>
-        <input type="hidden" name="cache_ttl_days" id="bulk-ttl" value="30"/>
+        <input type="hidden" name="cache_ttl_days" id="bulk-ttl" value="365"/>
 
         <button type="submit" class="btn-primary w-full py-2.5">Start Bulk Validation</button>
       </form>

@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     neverbounce_daily_cap: int = 0
     hunter_daily_cap: int = 0
 
-    cache_ttl_days: int = 30
+    cache_ttl_days: int = 365
 
     # Storage — override DATABASE_URL for Postgres/Neon on Vercel
     database_url: str = ""

@@ -108,7 +108,7 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 - `ZEROBOUNCE_API_KEY`, `NEVERBOUNCE_API_KEY`, `HUNTER_API_KEY`
 
 ### Optional config
-- `CACHE_TTL_DAYS=30` — default result cache lifetime
+- `CACHE_TTL_DAYS=365` — default result cache lifetime (1 year; was 30 prior to v0.16)
 - `HTTPX_TIMEOUT=10.0` — keep ≤ 8 on Vercel Hobby
 - `MAX_BULK_EMAILS=1000` — hard cap on rows per single CSV upload (0 = unlimited). Bigger files get a 400 with "exceeds N email limit per upload".
 - `MAX_USER_ACTIVE_JOBS=4` — max queued+running bulk jobs a single user can have in flight (0 = unlimited). Excess uploads get a 429.
