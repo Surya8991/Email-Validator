@@ -16,28 +16,28 @@
     <div class="text-xl font-semibold">{{ cs.total }}</div>
   </div>
   <div class="rounded-lg border border-green-200 dark:border-green-900 p-3 bg-green-50/30 dark:bg-green-950/20">
-    <div class="text-xs uppercase tracking-wide text-green-700 dark:text-green-300">Valid</div>
+    <div class="text-xs uppercase tracking-wide text-green-700 dark:text-green-300">Cached valid</div>
     <div class="text-xl font-semibold text-green-700 dark:text-green-300">
       {{ cs.valid }}
       {% if cs.total %}<span class="text-xs font-normal text-gray-500">({{ (cs.valid / cs.total * 100) | round(1) }}%)</span>{% endif %}
     </div>
   </div>
   <div class="rounded-lg border border-red-200 dark:border-red-900 p-3 bg-red-50/30 dark:bg-red-950/20">
-    <div class="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">Invalid</div>
+    <div class="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">Cached invalid</div>
     <div class="text-xl font-semibold text-red-700 dark:text-red-300">
       {{ cs.invalid }}
       {% if cs.total %}<span class="text-xs font-normal text-gray-500">({{ (cs.invalid / cs.total * 100) | round(1) }}%)</span>{% endif %}
     </div>
   </div>
   <div class="rounded-lg border border-amber-200 dark:border-amber-900 p-3 bg-amber-50/30 dark:bg-amber-950/20">
-    <div class="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">Risky</div>
+    <div class="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">Cached risky</div>
     <div class="text-xl font-semibold text-amber-700 dark:text-amber-300">
       {{ cs.risky }}
       {% if cs.total %}<span class="text-xs font-normal text-gray-500">({{ (cs.risky / cs.total * 100) | round(1) }}%)</span>{% endif %}
     </div>
   </div>
   <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3" title="Unknowns are never cached by design — see validator.py">
-    <div class="text-xs uppercase tracking-wide text-gray-500">Unknown</div>
+    <div class="text-xs uppercase tracking-wide text-gray-500">Cached unknown</div>
     <div class="text-xl font-semibold text-gray-500 dark:text-gray-400">
       {{ cs.unknown }}
       <span class="text-xs font-normal text-gray-400">(not cached)</span>
