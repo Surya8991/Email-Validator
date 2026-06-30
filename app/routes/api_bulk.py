@@ -523,7 +523,14 @@ async def download_bulk(
             pd = json.loads(results[0].provider_data)
             provider_cols = [f"{p}_status" for p in pd]
         except (ValueError, TypeError) as e:
-            logger.warning("download_bulk: bad provider_data on first row of job %s: %s", job_id, e)
+            # Strip CR/LF so a forged provider_data payload can't inject
+            # fake log lines (CodeQL py/log-injection). job_id is already
+            # int-typed by FastAPI.
+            safe_err = str(e).replace("\r", " ").replace("\n", " ")[:200]
+            logger.warning(
+                "download_bulk: bad provider_data on first row of job %d: %s",
+                int(job_id), safe_err,
+            )
 
     fieldnames = ["email", "verdict"] + provider_cols + ["from_cache"]
     buf = io.StringIO()
