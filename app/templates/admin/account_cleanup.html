@@ -686,7 +686,23 @@
       await _ensureGoogleSdk();
       await _getAccessToken();
 
-      // 1. Create a new spreadsheet with the three named tabs in one call.
+      // 1. Pre-compute each tab's row + column count so we can request a
+      //    pre-sized grid in the create call. The Sheets default is
+      //    1000 rows × 26 columns; first chunked PUT auto-expands the
+      //    grid to (header + 5000 = 5001 rows) and the NEXT PUT lands at
+      //    A5001 → grid wasn't expanded for it → 400 INVALID_ARGUMENT
+      //    "Range exceeds grid limits". Pre-sizing skips that entirely.
+      //
+      //    +1 for the header row, +50 columns of headroom for the
+      //    appended extra columns (drop_reason, cache_verdict, …) so
+      //    we don't recount per tab.
+      const baseCols = state.headers.length;
+      const verifiedRows = (state.verifiedOnly || []).length + 1;
+      const invalidRows = (state.dropped || []).length + 1;
+      const allRows = state.rows.length + 1;
+      const colCount = baseCols + 50;
+
+      // 2. Create the new spreadsheet with all three tabs pre-sized.
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       SHEETS_STATUS.textContent = "Creating spreadsheet…";
       const createResp = await fetch(
@@ -700,9 +716,9 @@
           body: JSON.stringify({
             properties: { title: `${baseName()} — cleanup ${stamp}` },
             sheets: [
-              { properties: { title: "Verified" } },
-              { properties: { title: "Invalid" } },
-              { properties: { title: "All" } },
+              { properties: { title: "Verified", gridProperties: { rowCount: verifiedRows, columnCount: colCount } } },
+              { properties: { title: "Invalid",  gridProperties: { rowCount: invalidRows,  columnCount: colCount } } },
+              { properties: { title: "All",      gridProperties: { rowCount: allRows,      columnCount: colCount } } },
             ],
           }),
         },
