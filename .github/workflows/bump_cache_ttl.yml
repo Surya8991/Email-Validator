@@ -1,0 +1,53 @@
+name: Bump Cache TTL
+
+# One-off / on-demand: extend EmailCache.expires_at out to N days from
+# validated_at for every existing row. Used after the default
+# cache_ttl_days was bumped 30 → 365 in v0.16 so rows written before
+# the bump don't expire on the old shorter schedule.
+#
+# Idempotent — re-running after a successful sweep is a no-op (the
+# WHERE clause skips rows already at target TTL).
+#
+# Trigger:
+#   gh workflow run bump_cache_ttl.yml                       # default 365 days
+#   gh workflow run bump_cache_ttl.yml -f days=730           # 2-year TTL
+#   gh workflow run bump_cache_ttl.yml -f dry_run=true       # preview only
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Target TTL in days from validated_at (default: 365)"
+        required: false
+        type: string
+        default: "365"
+      dry_run:
+        description: "Print the affected row count without updating"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Bump cache TTL
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAYS: ${{ inputs.days || '365' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          ARGS=(--days "$DAYS")
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          python scripts/bump_cache_ttl.py "${ARGS[@]}"
