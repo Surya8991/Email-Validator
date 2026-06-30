@@ -58,20 +58,26 @@ jobs:
   retry:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Same 3-bucket concurrency scheme as bulk_process — GHA expression
-    # syntax has no `%` operator, so partition `bucket` across {a,b,c}
-    # with endsWith() on its last digit. Fan-out admin dispatches send
-    # bucket=0,1,2,...,14 — each distinct bucket lands in one of the
-    # 3 GHA queues, so at most 3 retry runs execute at once and the
-    # remaining 12 wait in the queue.
+    # Same 10-bucket concurrency scheme as bulk_process — one GHA
+    # concurrency group per digit 0–9 keyed on the LAST DIGIT of the
+    # bucket input. Fan-out admin dispatches send bucket=0..N-1; with
+    # the default num_buckets=15, buckets 0–9 land in groups 0–9 and
+    # buckets 10–14 land in groups 0–4 (each shared by 2 dispatches).
+    # At most 10 retry runs execute concurrently; the rest queue.
     concurrency:
       group: >-
         bulk-retry-${{
-          (endsWith(inputs.bucket, '0') || endsWith(inputs.bucket, '3') ||
-           endsWith(inputs.bucket, '6') || endsWith(inputs.bucket, '9')) && 'a'
-          || (endsWith(inputs.bucket, '1') || endsWith(inputs.bucket, '4') ||
-              endsWith(inputs.bucket, '7')) && 'b'
-          || 'c'
+          endsWith(inputs.bucket, '0') && '0'
+          || endsWith(inputs.bucket, '1') && '1'
+          || endsWith(inputs.bucket, '2') && '2'
+          || endsWith(inputs.bucket, '3') && '3'
+          || endsWith(inputs.bucket, '4') && '4'
+          || endsWith(inputs.bucket, '5') && '5'
+          || endsWith(inputs.bucket, '6') && '6'
+          || endsWith(inputs.bucket, '7') && '7'
+          || endsWith(inputs.bucket, '8') && '8'
+          || endsWith(inputs.bucket, '9') && '9'
+          || 'x'
         }}
       cancel-in-progress: false
 

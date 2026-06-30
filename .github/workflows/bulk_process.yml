@@ -23,20 +23,30 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Cap concurrent bulk runs at 3 by bucketing job_id's last digit into
-    # 3 groups — GHA expression syntax has no `%` operator, so partition
-    # the 10 trailing digits across {a,b,c} with endsWith(). A 4th
-    # dispatched job lands in whichever bucket and waits for the run
-    # ahead of it. Accuracy degrades past ~3 parallel workers (Bouncify
-    # rate limits start producing 'unknown').
+    # Cap concurrent bulk runs at 10 by bucketing on the LAST DIGIT of
+    # job_id — one GHA concurrency group per digit 0–9. GHA expression
+    # syntax has no `%` operator and no string indexing, so we expand
+    # the partition by hand with endsWith(). An 11th dispatched job
+    # lands in whichever bucket and waits for the run ahead of it.
+    #
+    # Bumped from 3 → 10 buckets so a flurry of bulk jobs no longer
+    # piles up in the GHA queue for 30+ minutes. Bouncify rate limits
+    # may push 'unknown' counts up at this concurrency on lower tiers;
+    # use the retry_unknowns sweep to re-resolve those.
     concurrency:
       group: >-
         bulk-${{
-          (endsWith(inputs.job_id, '0') || endsWith(inputs.job_id, '3') ||
-           endsWith(inputs.job_id, '6') || endsWith(inputs.job_id, '9')) && 'a'
-          || (endsWith(inputs.job_id, '1') || endsWith(inputs.job_id, '4') ||
-              endsWith(inputs.job_id, '7')) && 'b'
-          || 'c'
+          endsWith(inputs.job_id, '0') && '0'
+          || endsWith(inputs.job_id, '1') && '1'
+          || endsWith(inputs.job_id, '2') && '2'
+          || endsWith(inputs.job_id, '3') && '3'
+          || endsWith(inputs.job_id, '4') && '4'
+          || endsWith(inputs.job_id, '5') && '5'
+          || endsWith(inputs.job_id, '6') && '6'
+          || endsWith(inputs.job_id, '7') && '7'
+          || endsWith(inputs.job_id, '8') && '8'
+          || endsWith(inputs.job_id, '9') && '9'
+          || 'x'
         }}
       cancel-in-progress: false
 

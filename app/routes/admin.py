@@ -519,11 +519,11 @@ async def admin_retry_unknowns(
     the same email always lands in the same bucket — zero double-work
     across parallel runs even as rows resolve.
 
-    GHA's 3-bucket concurrency group on the workflow caps in-flight at 3;
-    the remaining N-3 wait in GitHub's own queue and dequeue as runs
+    GHA's 10-bucket concurrency group on the workflow caps in-flight at
+    10; the remaining N-10 wait in GitHub's own queue and dequeue as runs
     finish. With num_buckets=15 and ~500 emails per bucket, one click
-    covers ~7,500 emails at ~3× the throughput of the old single-run
-    sweep.
+    covers ~7,500 emails at up to ~10× the throughput of a single
+    sequential sweep.
 
     Returns 502 with the GitHub API error of the FIRST failed dispatch
     (subsequent ones aren't attempted) so the UI can surface it. 503
@@ -568,6 +568,21 @@ async def admin_retry_unknowns(
 
     dispatched: list[int] = []
     async with _httpx.AsyncClient(timeout=8.0) as client:
+        # Refuse the whole fan-out if the GHA queue is already full —
+        # 15 dispatches in a tight loop would otherwise blow past the cap.
+        cap = settings.max_queued_workflow_runs
+        if cap > 0:
+            from app.routes.api_bulk import _count_queued_workflow_runs
+            queued = await _count_queued_workflow_runs(client, "retry_unknowns.yml")
+            if queued >= cap:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"Retry queue is full: {queued} retry runs are already "
+                        f"waiting (cap: {cap}). Wait for some to start before "
+                        f"dispatching more."
+                    ),
+                )
         for bucket in range(num_buckets):
             inputs = dict(base_inputs, bucket=str(bucket))
             resp = await client.post(
@@ -593,8 +608,8 @@ async def admin_retry_unknowns(
         "ok": True,
         "dispatched": len(dispatched),
         "buckets": dispatched,
-        "in_flight_cap": 3,
-        "queued": max(0, len(dispatched) - 3),
+        "in_flight_cap": 10,
+        "queued": max(0, len(dispatched) - 10),
         "approx_emails": len(dispatched) * batch_size,
     }
 
