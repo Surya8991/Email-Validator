@@ -7,6 +7,7 @@ import secrets
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Any
 from urllib.parse import urlencode
 
 import bcrypt
@@ -45,13 +46,13 @@ INVITE_TTL_DAYS = 7
 # Same pattern as the user dashboard in app/routes/ui.py — without it, a cold
 # Neon connection + 4 COUNTs + a 13-day GROUP BY blows past Vercel Hobby's
 # 10s function limit and the page 504s.
-_ADMIN_OVERVIEW_CACHE: dict = {"ts": 0.0, "data": None}
+_ADMIN_OVERVIEW_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _ADMIN_OVERVIEW_TTL = 30.0
 
 router = APIRouter(prefix="/admin")
 
 
-def _admin_overview_aggregates() -> dict:
+def _admin_overview_aggregates() -> dict[str, Any]:
     """Run the admin overview's COUNT + GROUP BY queries.
 
     Heavy on a cold Neon connection — callers should wrap with
@@ -159,7 +160,7 @@ def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
 
 
-def _admin_ctx(active: str, current_user: User) -> dict:
+def _admin_ctx(active: str, current_user: User) -> dict[str, Any]:
     return {"admin_active": active, "current_user": current_user}
 
 
@@ -628,7 +629,7 @@ async def account_cleanup_page(request: Request, current_user: User = Depends(re
 
 @router.post("/cache-lookup")
 async def admin_cache_lookup(
-    payload: dict,
+    payload: dict[str, object],
     current_user: User = Depends(require_admin),
 ):
     """Batch cache verdict lookup for the Account Cleanup page.
@@ -728,7 +729,7 @@ def admin_usage_export(current_user: User = Depends(require_admin)):
     """CSV of per-user activity + provider call totals (capacity-planning report)."""
     with Session(engine) as db:
         users = db.exec(select(User).order_by(User.email)).all()
-        rows_data: list[tuple] = []
+        rows_data: list[tuple[object, ...]] = []
         for u in users:
             if u.id is None:
                 continue
@@ -825,7 +826,7 @@ def admin_user_emails_export(
 
 @router.get("/providers", response_class=HTMLResponse)
 async def admin_providers(request: Request, current_user: User = Depends(require_admin)):
-    def _p(name: str, env: str, key: str, cap: int) -> dict:
+    def _p(name: str, env: str, key: str, cap: int) -> dict[str, Any]:
         return {"name": name, "env": env, "configured": bool(key), "daily_cap": cap}
 
     s = settings

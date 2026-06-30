@@ -1,3 +1,5 @@
+from typing import Any
+
 import httpx
 
 from app.config import settings
@@ -19,7 +21,7 @@ def get_client() -> httpx.AsyncClient:
     return _client
 
 
-def get_all_providers() -> dict:
+def get_all_providers() -> dict[str, Any]:
     client = get_client()
     return {
         "local": LocalProvider(),

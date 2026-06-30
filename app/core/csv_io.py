@@ -1,12 +1,13 @@
 import csv
 import io
+from typing import Any
 
 import aiofiles
 
 
-async def parse_csv_emails(filepath: str, email_column: str = "") -> list[tuple[int, str, dict]]:
+async def parse_csv_emails(filepath: str, email_column: str = "") -> list[tuple[int, str, dict[str, str]]]:
     """Returns list of (row_index, email, original_row_dict)."""
-    rows = []
+    rows: list[tuple[int, str, dict[str, str]]] = []
     async with aiofiles.open(filepath, encoding="utf-8-sig") as f:
         content = await f.read()
     reader = csv.DictReader(io.StringIO(content))
@@ -29,9 +30,9 @@ async def parse_csv_emails(filepath: str, email_column: str = "") -> list[tuple[
 
 
 def write_results_csv(
-    original_rows: list[dict],
+    original_rows: list[dict[str, Any]],
     email_col: str,
-    results: list[dict],  # [{email, verdict, providers:{...}}]
+    results: list[dict[str, Any]],  # [{email, verdict, providers:{...}}]
     output_path: str,
 ) -> None:
     if not original_rows:

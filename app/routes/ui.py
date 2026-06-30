@@ -5,6 +5,7 @@ import json
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -23,7 +24,7 @@ from app.templating import job_eta_seconds, templates
 # picks up fresh data (and dovetails with the /cache page's own 60s poll, so
 # numbers stay aligned), but long enough that a burst of navigation between
 # tabs doesn't re-COUNT the whole tables on every click.
-_DASHBOARD_CACHE: dict = {"ts": 0.0, "data": None}
+_DASHBOARD_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _DASHBOARD_TTL = 10.0
 
 
@@ -35,7 +36,7 @@ _JOB_LIST_COLS = (
 _VERDICT_KEYS = ("valid", "invalid", "risky", "unknown")
 
 
-def _per_user_verdict_stats() -> list[dict]:
+def _per_user_verdict_stats() -> list[dict[str, Any]]:
     """One JOIN GROUP BY user_id, verdict — returns sorted rows:
         [{user_id, user_email, jobs, total, valid, invalid, risky, unknown}, ...]
     Used by /jobs to render the per-user stats panel visible to everyone.
@@ -114,7 +115,7 @@ def _job_verdict_counts(session: Session, job_ids: list[int]) -> dict[int, dict[
     return out
 
 
-def _dashboard_aggregates() -> dict:
+def _dashboard_aggregates() -> dict[str, Any]:
     """Run the dashboard's COUNT queries. Cheap on warm Neon, slow when cold —
     so we cache the result briefly and let callers use asyncio.to_thread to
     parallelize multiple stat lookups when needed."""
@@ -229,7 +230,7 @@ def _is_privileged(user: User) -> bool:
     return user.role in ("admin", "superadmin")
 
 
-def _cache_verdict_stats() -> dict:
+def _cache_verdict_stats() -> dict[str, Any]:
     """Total cache size + per-verdict counts. Drives the dashboard cards on
     /cache (both admin and user views). One GROUP BY query keyed off the
     indexed `verdict` column — cheap even on hundreds of thousands of rows.
@@ -458,7 +459,7 @@ def _list_jobs_lightweight(
     status: str | None = None,
     owner: str | None = None,
     page: int = 1,
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict[str, Any]], int]:
     """Same column-projection pattern as the dashboard. Keeps csv_data on Neon.
 
     Returns (rows, total) — total is the row count BEFORE pagination so the

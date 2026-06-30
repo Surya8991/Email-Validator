@@ -255,6 +255,7 @@ async def profile_change_password(
     ))
     current_user.password_hash = _hash_password(new_password)
     # Phished sessions must NOT survive a password change.
+    assert current_user.id is not None
     _revoke_all_sessions(current_user.id, db)
     new_token = create_user_session(current_user, db)
     db.commit()
@@ -415,6 +416,7 @@ async def reset_password_post(
     user.password_hash = _hash_password(password)
     pr.used_at = datetime.utcnow()
     # Any session opened before the reset is now untrusted — drop them all.
+    assert user.id is not None
     _revoke_all_sessions(user.id, db)
     db.commit()
     return templates.TemplateResponse(request, "auth/reset_password.html", {"success": True})

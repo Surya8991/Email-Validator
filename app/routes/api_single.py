@@ -54,13 +54,13 @@ async def verify_single_htmx(
 ):
     form = await request.form()
     email = str(form.get("email", ""))
-    providers_raw = form.getlist("providers")
+    providers_raw: list[str] = [str(p) for p in form.getlist("providers")]
     if not providers_raw:
         providers_raw = ["bouncify"]
     strategy = str(form.get("strategy", "bouncify_only"))
     ttl_raw = form.get("cache_ttl_days")
     try:
-        ttl_days: int | None = int(ttl_raw) if ttl_raw else None
+        ttl_days: int | None = int(str(ttl_raw)) if ttl_raw else None
     except (ValueError, TypeError):
         ttl_days = None
 

@@ -6,40 +6,78 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel in-progress CI runs when a new push lands on the same ref. Avoids
-# burning two parallel runs (and double GHA minutes) on a quick fixup push.
+# Cancel in-progress runs on the same ref so a quick fixup push doesn't burn
+# double the minutes waiting for the previous run to finish.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint-typecheck-test:
+  lint:
+    name: Ruff lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
+      - run: pip install ruff
+      - run: ruff check .
 
+  typecheck:
+    name: MyPy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install ruff mypy pytest pytest-asyncio respx
+        run: pip install -r requirements.txt mypy
+      - run: mypy app
 
-      - name: pip-audit
-        run: pip install pip-audit && pip-audit -r requirements.txt
-
-      - name: Ruff
-        run: ruff check .
-
-      - name: Mypy
-        run: mypy app
-        continue-on-error: true  # type drift is reported but doesn't block merges yet
-
-      - name: Pytest
+  test:
+    name: Pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio respx
+      - name: Run tests
         env:
-          # tests run against in-memory sqlite — no Postgres needed
           DATABASE_URL: ""
         run: pytest -q
+
+  audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt
+
+  # Single status check for branch protection to require. Turns green only
+  # when lint + typecheck + test + audit all pass. Add this job's name to
+  # "Require status checks to pass" in Settings → Branches → main.
+  ci-pass:
+    name: CI pass
+    needs: [lint, typecheck, test, audit]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: All checks passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All CI jobs passed."

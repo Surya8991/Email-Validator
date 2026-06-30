@@ -2,6 +2,7 @@ import asyncio
 import csv as _csv
 import io as _io
 import logging
+from typing import Any
 
 import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -27,7 +28,7 @@ def _map(result: str) -> str:
     return _STATUS_MAP.get(result.lower().strip().strip('"'), "unknown")
 
 
-def _yn(row: dict, key: str) -> bool:
+def _yn(row: dict[str, Any], key: str) -> bool:
     """Bouncify's CSV uses Y/N for booleans."""
     return (row.get(key, "") or "").strip().strip('"').upper() == "Y"
 
@@ -156,7 +157,7 @@ class BouncifyProvider:
             #    Email, Verification Result, Syntax Error, ISP, Role,
             #    Disposable, Trap, Verified At
             reader = _csv.DictReader(_io.StringIO(csv_text))
-            row_by_email: dict[str, dict] = {}
+            row_by_email: dict[str, dict[str, Any]] = {}
             for row in reader:
                 key = (row.get("Email") or row.get("email") or "").strip().strip('"').lower()
                 if key:
@@ -165,7 +166,7 @@ class BouncifyProvider:
             # 5. Build per-email ProviderResult preserving input order.
             results: list[ProviderResult] = []
             for e in emails:
-                row = row_by_email.get(e.strip().lower())
+                row = row_by_email.get(e.strip().lower())  # type: ignore[assignment]
                 if not row:
                     results.append(ProviderResult(
                         status="unknown",

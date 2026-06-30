@@ -1,4 +1,5 @@
 import os
+from typing import Generator
 
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -19,7 +20,7 @@ def _db_url() -> str:
     return "sqlite:///./email_validator.db"
 
 
-def _engine_kwargs() -> dict:
+def _engine_kwargs() -> dict[str, object]:
     url = _db_url()
     if url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
@@ -227,7 +228,7 @@ def backfill_team_owners() -> None:
         db.commit()
 
 
-def get_session():
+def get_session() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session
 

@@ -104,7 +104,7 @@ def set_cache(
         )
     else:
         from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-        stmt = sqlite_insert(EmailCache).values(**row)
+        stmt = sqlite_insert(EmailCache).values(**row)  # type: ignore[assignment]
         stmt = stmt.on_conflict_do_update(
             index_elements=["email"],
             set_={

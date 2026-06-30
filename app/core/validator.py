@@ -65,7 +65,7 @@ async def validate(
 
     if strategy == "local_first":
         local = selected.get("local")
-        local_result: ProviderResult | None = None
+        local_result = None
         if local:
             local_result = await local.verify(email)
             if local_result.status == "invalid":

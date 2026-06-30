@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from typing import Any
 
 from sqlmodel import Session
 
@@ -28,7 +29,7 @@ async def _validate_with_cache(
     providers: list[str],
     strategy: str,
     ttl_days: int | None = None,
-) -> tuple[str, dict, bool]:
+) -> tuple[str, dict[str, Any], bool]:
     """Returns (verdict, provider_data_dict, from_cache)."""
     cached = get_cached(email)
     if cached:

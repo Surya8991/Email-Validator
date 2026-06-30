@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -287,6 +288,7 @@ async def create_bulk_job(
         )
         session.add(job)
         session.commit()
+        assert job.id is not None
         job_id = job.id
 
     ttl: int | None = cache_ttl_days if cache_ttl_days >= 0 else None
@@ -304,11 +306,11 @@ async def create_bulk_job(
             reason = dispatch_error or "GitHub Actions dispatch failed (no reason captured)."
             logger.warning("Job %s: %s", job_id, reason)
             with Session(engine) as session:
-                job = session.get(Job, job_id)
-                if job:
-                    job.status = "failed"
-                    job.error = reason[:500]
-                    session.add(job)
+                refetched = session.get(Job, job_id)
+                if refetched:
+                    refetched.status = "failed"
+                    refetched.error = reason[:500]
+                    session.add(refetched)
                     session.commit()
             response_status = "failed"
         else:
@@ -328,7 +330,7 @@ _FAILED_CONCLUSIONS = {"failure", "cancelled", "timed_out", "skipped"}
 @router.post("/api/bulk/{job_id}/workflow-callback")
 async def workflow_callback(
     job_id: int,
-    payload: dict,
+    payload: dict[str, Any],
     x_callback_token: str = Header(default=""),
 ):
     """Called by the bulk_process workflow's final `if: always()` step so the
@@ -611,7 +613,7 @@ async def download_bulk(
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for r in results:
-        row: dict = {"email": r.email, "verdict": r.verdict, "from_cache": False}
+        row: dict[str, Any] = {"email": r.email, "verdict": r.verdict, "from_cache": False}
         try:
             pd = json.loads(r.provider_data)
             for p, data in pd.items():

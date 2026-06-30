@@ -43,12 +43,12 @@ def _client_ip(request: Request) -> str:
     appends the real client address at the end, while the leftmost entry
     is attacker-controlled and must be ignored.
     """
-    fwd = request.headers.get("x-forwarded-for", "")
+    fwd: str = request.headers.get("x-forwarded-for", "") or ""
     if fwd:
         for part in reversed([p.strip() for p in fwd.split(",")]):
             if part and not _is_private(part):
                 return part
-    return request.client.host if request.client else "?"
+    return str(request.client.host) if request.client else "?"
 
 
 def rate_limit(request: Request, scope: str, max_hits: int, window_seconds: int) -> None:

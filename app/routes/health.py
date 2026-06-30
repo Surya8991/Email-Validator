@@ -42,7 +42,7 @@ async def health(deep: int = 0):
     except Exception as e:  # noqa: BLE001
         logger.warning("health: db check failed: %s", e)
 
-    payload: dict = {
+    payload: dict[str, object] = {
         "status": "ok" if db_ok else "degraded",
         "providers_enabled": get_enabled_providers(),
         "database": "postgresql" if is_postgres() else "sqlite",
