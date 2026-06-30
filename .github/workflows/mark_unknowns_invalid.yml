@@ -10,9 +10,15 @@ on:
   workflow_dispatch:
     inputs:
       job_id:
-        description: "Job ID whose unknowns get flipped to invalid"
-        required: true
+        description: "Job ID whose unknowns get flipped (blank = all jobs)"
+        required: false
         type: string
+        default: ""
+      min_retry_count:
+        description: "Only flip rows with retry_count >= this value (default 0)"
+        required: false
+        type: string
+        default: "0"
       dry_run:
         description: "Just print the count without updating"
         required: false
@@ -37,11 +43,15 @@ jobs:
       - name: Flip unknowns
         env:
           JOB_ID: ${{ inputs.job_id }}
+          MIN_RC: ${{ inputs.min_retry_count || '0' }}
           DRY_RUN: ${{ inputs.dry_run }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            python scripts/mark_job_unknowns_invalid.py --job-id "$JOB_ID" --dry-run
-          else
-            python scripts/mark_job_unknowns_invalid.py --job-id "$JOB_ID"
+          ARGS=(--min-retry-count "$MIN_RC")
+          if [ -n "$JOB_ID" ]; then
+            ARGS+=(--job-id "$JOB_ID")
           fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          python scripts/mark_job_unknowns_invalid.py "${ARGS[@]}"
