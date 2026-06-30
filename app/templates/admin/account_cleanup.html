@@ -781,23 +781,57 @@
       await _ensureGoogleSdk();
       await _getAccessToken();
 
-      // 1. Pre-compute each tab's row + column count so we can request a
-      //    pre-sized grid in the create call. The Sheets default is
-      //    1000 rows × 26 columns; first chunked PUT auto-expands the
-      //    grid to (header + 5000 = 5001 rows) and the NEXT PUT lands at
-      //    A5001 → grid wasn't expanded for it → 400 INVALID_ARGUMENT
-      //    "Range exceeds grid limits". Pre-sizing skips that entirely.
-      //
-      //    +1 for the header row, +50 columns of headroom for the
-      //    appended extra columns (drop_reason, cache_verdict, …) so
-      //    we don't recount per tab.
-      const baseCols = state.headers.length;
-      const verifiedRows = (state.verifiedOnly || []).length + 1;
-      const invalidRows = (state.dropped || []).length + 1;
-      const allRows = state.rows.length + 1;
-      const colCount = baseCols + 50;
+      // 1. Build the three tabs' 2D arrays FIRST. Pre-size will be
+      //    derived from values.length below — NOT from `state.*` —
+      //    so the grid request always matches exactly what we're
+      //    about to write. Earlier revision read row counts from
+      //    state.verifiedOnly / state.dropped / state.rows and any
+      //    divergence between those and the built arrays collapsed
+      //    the grid to 1 row, letting the first 5,000-row PUT expand
+      //    to exactly 5,000 rows and the next PUT at A5001 trip
+      //    INVALID_ARGUMENT "Max rows: 5000".
+      const verifiedValues = _rowsForTab(
+        state.verifiedOnly || [], [], () => "",
+      );
+      const droppedValues = _rowsForTab(
+        (state.dropped || []).map((d) => d.row),
+        ["drop_reason"],
+        (_r, _i) => "",  // placeholder — replaced below by walking dropped[]
+      );
+      // Fix drop_reason values now that we have the wrapper:
+      (state.dropped || []).forEach((d, idx) => {
+        droppedValues[idx + 1][state.headers.length] = d.reason || "";
+      });
+      const allValues = _rowsForTab(
+        state.rows,
+        ["cache_verdict", "cache_validated_at"],
+        (_r, _i) => "",
+      );
+      // Annotate the All tab from the per-row verdicts cached during filter.
+      const verdicts = state.rowVerdicts || [];
+      state.rows.forEach((_r, idx) => {
+        const v = verdicts[idx];
+        const rowOut = allValues[idx + 1];
+        rowOut[state.headers.length] = v ? v.verdict : "";
+        rowOut[state.headers.length + 1] = v && v.validated_at ? v.validated_at : "";
+      });
 
-      // 2. Resolve the destination spreadsheet. Two paths:
+      // 2. Derive pre-size from the values arrays + a 1,000-row
+      //    safety buffer per tab. Buffer absorbs any future
+      //    off-by-one drift between values.length and what the
+      //    chunked PUTs actually address. +50 columns over
+      //    state.headers.length covers the appended drop_reason /
+      //    cache_verdict / cache_validated_at without recounting
+      //    per tab.
+      const ROW_BUFFER = 1000;
+      const colCount = state.headers.length + 50;
+      const tabSpecs = [
+        { title: "Verified", rowCount: verifiedValues.length + ROW_BUFFER, columnCount: colCount },
+        { title: "Invalid",  rowCount: droppedValues.length  + ROW_BUFFER, columnCount: colCount },
+        { title: "All",      rowCount: allValues.length      + ROW_BUFFER, columnCount: colCount },
+      ];
+
+      // 3. Resolve the destination spreadsheet. Two paths:
       //    a) If GOOGLE_SHEETS_TARGET_ID is set AND we can read it →
       //       reuse it. Clear our 3 tabs (or add them if missing) and
       //       resize their grids. Other tabs in the spreadsheet stay
@@ -806,11 +840,6 @@
       //       behaviour). Used as the fallback whenever (a) fails:
       //       blank ID, 404 (deleted), 403 (no edit access), or any
       //       network error.
-      const tabSpecs = [
-        { title: "Verified", rowCount: verifiedRows, columnCount: colCount },
-        { title: "Invalid",  rowCount: invalidRows,  columnCount: colCount },
-        { title: "All",      rowCount: allRows,      columnCount: colCount },
-      ];
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
       let spreadsheetId = null;
@@ -870,34 +899,7 @@
         spreadsheetUrl = created.spreadsheetUrl;
       }
 
-      // 2. Build the three tabs' 2D arrays.
-      const verifiedValues = _rowsForTab(
-        state.verifiedOnly || [], [], () => "",
-      );
-      const droppedValues = _rowsForTab(
-        (state.dropped || []).map((d) => d.row),
-        ["drop_reason"],
-        (_r, _i) => "",  // placeholder — replaced below by walking dropped[]
-      );
-      // Fix drop_reason values now that we have the wrapper:
-      (state.dropped || []).forEach((d, idx) => {
-        droppedValues[idx + 1][state.headers.length] = d.reason || "";
-      });
-      const allValues = _rowsForTab(
-        state.rows,
-        ["cache_verdict", "cache_validated_at"],
-        (_r, _i) => "",
-      );
-      // Annotate the All tab from the per-row verdicts cached during filter.
-      const verdicts = state.rowVerdicts || [];
-      state.rows.forEach((_r, idx) => {
-        const v = verdicts[idx];
-        const rowOut = allValues[idx + 1];
-        rowOut[state.headers.length] = v ? v.verdict : "";
-        rowOut[state.headers.length + 1] = v && v.validated_at ? v.validated_at : "";
-      });
-
-      // 3. Write each tab. Verified first (smallest of the kept), then Invalid,
+      // 4. Write each tab. Verified first (smallest of the kept), then Invalid,
       //    then All (largest). Each write is chunked under the hood.
       await _writeTab(spreadsheetId, "Verified", verifiedValues, "Verified:");
       await _writeTab(spreadsheetId, "Invalid", droppedValues, "Invalid:");
