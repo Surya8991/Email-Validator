@@ -284,7 +284,11 @@ def _write_results(
 
 
 async def run(job_id: int) -> None:
-    create_db_tables()
+    # Skip migrations — db_init.yml runs them on every push, and running
+    # them here from N concurrent workers causes a Postgres deadlock
+    # between `ALTER TABLE … ADD COLUMN` (wants ACCESS EXCLUSIVE) and
+    # the siblings' regular SELECT/INSERT (holds ACCESS SHARE).
+    create_db_tables(skip_migrations=True)
 
     # The provider registry expects a live httpx.AsyncClient on
     # registry._client. The FastAPI lifespan hook normally sets this; the

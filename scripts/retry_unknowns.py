@@ -254,7 +254,9 @@ async def _process_batch(
 
 
 async def run(args: argparse.Namespace) -> int:
-    create_db_tables()
+    # Skip migrations — see comment in scripts/process_job.py:run.
+    # Concurrent worker startups race on ALTER TABLE locks and deadlock.
+    create_db_tables(skip_migrations=True)
     registry._client = httpx.AsyncClient(timeout=settings.httpx_timeout)
 
     providers = [p.strip() for p in (args.providers or "bouncify").split(",") if p.strip()]
