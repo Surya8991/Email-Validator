@@ -81,37 +81,104 @@ def _apply_lightweight_migrations() -> None:
     `SQLModel.metadata.create_all` (which only creates missing tables, not
     new columns on existing ones).
 
-    Wrapped in a Postgres advisory lock so concurrent callers don't
-    serialize on `ACCESS EXCLUSIVE` (which is what caused the deadlock
-    that killed job 101 in prod when two workers ALTER'd `emailresult`
-    while a third held an `ACCESS SHARE` from a SELECT). Only one caller
-    actually runs the DDL; others return immediately. Idempotent — the
-    `IF NOT EXISTS` clauses make repeated runs no-ops anyway."""
+    Strategy is "check, then act with a deadline":
+
+    1. Take a Postgres session-scoped advisory lock on a SEPARATE
+       connection. Other concurrent migration callers see the lock held
+       and return immediately. Putting the lock on its own connection
+       means a transaction abort in the DDL block can't poison the
+       unlock with `InFailedSqlTransaction`.
+    2. For each ADD COLUMN / CREATE INDEX, query `information_schema`
+       (and `pg_indexes`) first. If the column / index already exists,
+       skip — no ACCESS EXCLUSIVE attempt at all. After the first
+       successful migration run, every subsequent call is purely
+       read-only against `information_schema` and zero deadlock risk.
+    3. The (rare) actual DDL goes in its own short transaction with
+       `SET LOCAL lock_timeout='5s'` so a held ACCESS SHARE from a
+       sibling worker fails the ALTER fast with a clear error instead
+       of deadlock-aborting the whole connection.
+
+    Original deadlock that killed job 101 (and later db_init.yml runs
+    on PR #29 / #30) was the previous version's `engine.begin()` block
+    holding the connection through a series of ACCESS EXCLUSIVE ALTERs
+    while sibling bulk workers held ACCESS SHARE. Postgres's deadlock
+    detector picked us as the victim."""
     if not is_postgres():
         return
     from sqlalchemy import text
-    with engine.begin() as conn:
-        got_lock = conn.execute(
+
+    # Acquire the advisory lock on its own connection so a poisoned
+    # DDL transaction further down can't bork the unlock.
+    lock_conn = engine.connect()
+    try:
+        got_lock = lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:k)"),
             {"k": _MIGRATION_ADVISORY_LOCK_KEY},
         ).scalar()
+        lock_conn.commit()
         if not got_lock:
-            # Someone else is running migrations; trust them and move on.
-            return
+            return  # another caller is running migrations
         try:
-            for table, column, ddl in _PG_COLUMN_ADDS:
-                conn.execute(text(
-                    f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
-                ))
-            for name, target in _PG_INDEX_ADDS:
-                conn.execute(text(
-                    f'CREATE INDEX IF NOT EXISTS {name} ON {target}'
-                ))
+            _run_pending_migrations()
         finally:
-            conn.execute(
+            lock_conn.execute(
                 text("SELECT pg_advisory_unlock(:k)"),
                 {"k": _MIGRATION_ADVISORY_LOCK_KEY},
             )
+            lock_conn.commit()
+    finally:
+        lock_conn.close()
+
+
+def _run_pending_migrations() -> None:
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for table, column, ddl in _PG_COLUMN_ADDS:
+            # Strip quotes from quoted-identifier table names like '"user"'.
+            clean_table = table.strip('"')
+            exists = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ),
+                {"t": clean_table, "c": column},
+            ).first()
+            if exists:
+                continue  # nothing to do — column already there
+            try:
+                with conn.begin():
+                    # Fail fast if another worker holds ACCESS SHARE,
+                    # rather than waiting for the deadlock detector.
+                    conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+                    conn.execute(text(
+                        f'ALTER TABLE {table} ADD COLUMN {column} {ddl}'
+                    ))
+            except Exception as e:  # noqa: BLE001
+                # Don't kill the whole migration run for one stubborn
+                # table — the next caller will retry it.
+                print(
+                    f"[migration] skip ALTER {table}.{column}: "
+                    f"{type(e).__name__}: {str(e)[:160]}",
+                    flush=True,
+                )
+
+        for name, target in _PG_INDEX_ADDS:
+            idx_exists = conn.execute(
+                text("SELECT 1 FROM pg_indexes WHERE indexname = :n"),
+                {"n": name},
+            ).first()
+            if idx_exists:
+                continue
+            try:
+                with conn.begin():
+                    conn.execute(text("SET LOCAL lock_timeout = '10s'"))
+                    conn.execute(text(f'CREATE INDEX {name} ON {target}'))
+            except Exception as e:  # noqa: BLE001
+                print(
+                    f"[migration] skip CREATE INDEX {name}: "
+                    f"{type(e).__name__}: {str(e)[:160]}",
+                    flush=True,
+                )
 
 
 def backfill_team_owners() -> None:
