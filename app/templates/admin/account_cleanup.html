@@ -147,14 +147,18 @@
 
     {% if google_oauth_client_id %}
     <!-- Push to Google Sheets — overwrites the configured target
-         spreadsheet's Verified / Invalid / All tabs (clears + resizes
-         + rewrites). Falls back to creating a fresh spreadsheet if the
-         target is missing or the user has no access. Browser-direct
-         via OAuth + Sheets API; no server detour. -->
+         spreadsheet's Verified + Invalid tabs (clears + resizes
+         + rewrites). Falls back to creating a fresh spreadsheet if
+         the target is missing or the user has no access. Empty
+         columns are trimmed per tab to fit Sheets' 10M
+         cell-per-spreadsheet cap. The "All" annotated audit is
+         intentionally not pushed — use the ⬇ Annotated full CSV
+         button above instead. Browser-direct via OAuth + Sheets
+         API; no server detour. -->
     <div class="mt-2 pt-3 border-t border-dashed border-gray-200 dark:border-gray-800">
       <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">
         Push to Google Sheets
-        {% if google_sheets_target_id %}(replaces target spreadsheet's 3 tabs){% else %}(creates a new spreadsheet in your Drive){% endif %}
+        {% if google_sheets_target_id %}(replaces target spreadsheet's 2 tabs){% else %}(creates a new spreadsheet in your Drive){% endif %}
       </p>
       <div class="flex flex-wrap items-center gap-3">
         <button id="btn-push-sheets"
@@ -168,14 +172,19 @@
         </a>
       </div>
       <p class="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
-        Writes 3 tabs &mdash; <strong>Verified</strong>,
-        <strong>Invalid</strong> (with drop_reason), and <strong>All</strong>
-        (annotated with cache_verdict).
+        Writes 2 tabs &mdash; <strong>Verified</strong> and
+        <strong>Invalid</strong> (with drop_reason). Empty columns are
+        dropped per tab to stay under Sheets' 10M cell-per-spreadsheet
+        cap. The full annotated audit (with cache_verdict per row)
+        stays on the <em>⬇ Annotated full CSV</em> button above —
+        wide CRM exports exceed the Sheets cap on the audit tab
+        alone.
         {% if google_sheets_target_id %}
           Updates the configured target spreadsheet in place: existing
-          Verified / Invalid / All tabs are cleared and rewritten; any
-          other tabs in that spreadsheet are left alone. If the target
-          can't be reached, a new spreadsheet is created as fallback.
+          Verified / Invalid tabs are cleared and rewritten; any
+          other tabs (including any stale <em>All</em> tab from
+          earlier runs) are left alone. If the target can't be
+          reached, a new spreadsheet is created as fallback.
         {% else %}
           Creates a new spreadsheet in your Drive each run.
         {% endif %}
@@ -585,8 +594,11 @@
   });
 
   // ---- Step 4c: push to Google Sheets ---------------------------------------
-  // Browser-direct: OAuth popup → Sheets API. Creates ONE new spreadsheet in
-  // the user's Drive with three tabs (Verified / Invalid / All).
+  // Browser-direct: OAuth popup → Sheets API. Updates the configured target
+  // spreadsheet (or creates a fresh one as fallback) with two tabs —
+  // Verified + Invalid. The All-rows audit is intentionally left to the
+  // CSV download button; wide CRM exports exceed Sheets' 10M cell-per-
+  // spreadsheet cap on the All tab alone.
   //
   // Why browser-direct: the cleanup data lives entirely in browser memory
   // (84k × ~100 columns ≈ 80–100 MB). Routing through Vercel runs straight
@@ -806,88 +818,74 @@
       await _ensureGoogleSdk();
       await _getAccessToken();
 
-      // 1. Drop columns that are 100% empty across the data we're
-      //    about to push. Wide CRM exports routinely carry hundreds
-      //    of always-blank columns; including them wastes the
-      //    Sheets 10M cell-per-spreadsheet quota for zero info and
-      //    is what blew the create call with INVALID_ARGUMENT
-      //    "exceeds 10000000 cells" on a 481-column file.
-      SHEETS_STATUS.textContent = "Trimming empty columns…";
-      const activeHeaders = _activeHeaders([
-        state.verifiedOnly || [],
-        (state.dropped || []).map((d) => d.row),
-        state.rows,
-      ]);
+      // 1. Drop columns that are empty WITHIN EACH TAB independently.
+      //    Earlier revision computed one global active-headers set
+      //    across all 3 row sets — that kept invalid-only columns
+      //    in the verified tab and bloated cell count to >70M on
+      //    a 522-active-col file. Per-tab trimming typically cuts
+      //    Verified width 30-50% since verified rows tend to have
+      //    a tighter populated subset than the full CSV.
+      //
+      //    The All tab is no longer pushed to Sheets — at 84k rows
+      //    × ~520 cols it alone exceeds Sheets' 10M cell-per-
+      //    spreadsheet cap, and the same audit data is available
+      //    via the "⬇ Annotated full CSV" download button above.
+      SHEETS_STATUS.textContent = "Trimming empty columns per tab…";
+      const verifiedRows = state.verifiedOnly || [];
+      const droppedRowsList = (state.dropped || []).map((d) => d.row);
+      const verifiedActive = _activeHeaders([verifiedRows]);
+      const invalidActive  = _activeHeaders([droppedRowsList]);
 
-      // 2. Build the three tabs' 2D arrays FIRST. Pre-size below is
-      //    derived from values.length / values[0].length so the grid
-      //    request always matches exactly what we're about to write.
+      // 2. Build each tab's 2D array. Pre-size below is derived from
+      //    values.length / values[0].length so the grid request
+      //    always matches exactly what we're about to write.
       const verifiedValues = _rowsForTab(
-        activeHeaders, state.verifiedOnly || [], [], () => "",
+        verifiedActive, verifiedRows, [], () => "",
       );
       const droppedValues = _rowsForTab(
-        activeHeaders,
-        (state.dropped || []).map((d) => d.row),
+        invalidActive,
+        droppedRowsList,
         ["drop_reason"],
         (_r, _i) => "",  // placeholder — replaced below by walking dropped[]
       );
       // Fix drop_reason values now that we have the wrapper:
       (state.dropped || []).forEach((d, idx) => {
-        droppedValues[idx + 1][activeHeaders.length] = d.reason || "";
-      });
-      const allValues = _rowsForTab(
-        activeHeaders,
-        state.rows,
-        ["cache_verdict", "cache_validated_at"],
-        (_r, _i) => "",
-      );
-      // Annotate the All tab from the per-row verdicts cached during filter.
-      const verdicts = state.rowVerdicts || [];
-      state.rows.forEach((_r, idx) => {
-        const v = verdicts[idx];
-        const rowOut = allValues[idx + 1];
-        rowOut[activeHeaders.length] = v ? v.verdict : "";
-        rowOut[activeHeaders.length + 1] = v && v.validated_at ? v.validated_at : "";
+        droppedValues[idx + 1][invalidActive.length] = d.reason || "";
       });
 
-      // 3. Derive pre-size from the values arrays + a small safety
-      //    buffer. Buffer absorbs any future off-by-one drift
-      //    between values.length and what the chunked PUTs
-      //    actually address. Buffers were +50 cols / +1000 rows;
-      //    on a 481-col CSV that alone burnt ~1.5M cells. Tightened
-      //    to +5 cols / +100 rows.
+      // 3. Derive pre-size from the values arrays + small buffers
+      //    (+100 rows, +5 cols). Belt-and-suspenders against any
+      //    future drift between values.length and the chunked PUTs.
       const ROW_BUFFER = 100;
       const COL_EXTRA = 5;
-      // Each tab's actual width = activeHeaders.length + its own
-      // extra columns. Use values[0].length (header row) as the
-      // source of truth then add COL_EXTRA on top.
       const tabSpecs = [
         { title: "Verified", rowCount: verifiedValues.length + ROW_BUFFER, columnCount: verifiedValues[0].length + COL_EXTRA },
         { title: "Invalid",  rowCount: droppedValues.length  + ROW_BUFFER, columnCount: droppedValues[0].length  + COL_EXTRA },
-        { title: "All",      rowCount: allValues.length      + ROW_BUFFER, columnCount: allValues[0].length      + COL_EXTRA },
       ];
 
-      // 4. Pre-flight: refuse to call Sheets if our pre-sized grids
-      //    would breach the 10M cell-per-spreadsheet limit. Better
-      //    to fail loudly here than to wait for the API to reject
-      //    sheets[0] mid-create. Threshold 9.5M leaves a small
-      //    buffer for any built-in default-sheet overhead.
+      // 4. Pre-flight: refuse to call Sheets if the pre-sized grids
+      //    would breach the 10M cell-per-spreadsheet cap. Threshold
+      //    9.5M leaves headroom for default-sheet overhead.
       const projectedCells = tabSpecs.reduce(
         (acc, s) => acc + s.rowCount * s.columnCount, 0,
       );
       const CELL_LIMIT = 9_500_000;
       if (projectedCells > CELL_LIMIT) {
         throw new Error(
-          `Sheet too large: ${projectedCells.toLocaleString()} cells ` +
-          `(${activeHeaders.length} active cols × ` +
-          `${state.rows.length.toLocaleString()} rows) exceeds Sheets' ` +
-          `10M cell-per-spreadsheet limit. Drop unused CSV columns ` +
-          `before pushing, or use the CSV downloads instead.`,
+          `Sheet too large after per-tab trim: ${projectedCells.toLocaleString()} ` +
+          `cells (Verified ${verifiedActive.length} cols × ${verifiedRows.length.toLocaleString()} rows; ` +
+          `Invalid ${invalidActive.length} cols × ${droppedRowsList.length.toLocaleString()} rows) ` +
+          `exceeds Sheets' 10M cell-per-spreadsheet limit. Drop unused CSV ` +
+          `columns before pushing, or use the CSV downloads instead.`,
         );
       }
+      const droppedCols =
+        (state.headers.length - verifiedActive.length) +
+        (state.headers.length - invalidActive.length);
       SHEETS_STATUS.textContent =
-        `Dropped ${state.headers.length - activeHeaders.length} empty columns ` +
-        `(${activeHeaders.length} active). ${projectedCells.toLocaleString()} cells.`;
+        `Trimmed ${droppedCols} empty column-slots across 2 tabs ` +
+        `(Verified ${verifiedActive.length}, Invalid ${invalidActive.length}). ` +
+        `${projectedCells.toLocaleString()} cells.`;
 
       // 3. Resolve the destination spreadsheet. Two paths:
       //    a) If GOOGLE_SHEETS_TARGET_ID is set AND we can read it →
@@ -957,16 +955,18 @@
         spreadsheetUrl = created.spreadsheetUrl;
       }
 
-      // 4. Write each tab. Verified first (smallest of the kept), then Invalid,
-      //    then All (largest). Each write is chunked under the hood.
+      // 5. Write each tab. Verified first (typically larger of the
+      //    two), then Invalid. Each write is chunked under the hood.
+      //    The All tab is intentionally NOT pushed — at 84k rows ×
+      //    ~520 cols it alone exceeds Sheets' 10M cell limit; the
+      //    same audit data lives in the "⬇ Annotated full CSV"
+      //    download.
       await _writeTab(spreadsheetId, "Verified", verifiedValues, "Verified:");
       await _writeTab(spreadsheetId, "Invalid", droppedValues, "Invalid:");
-      await _writeTab(spreadsheetId, "All", allValues, "All:");
 
       SHEETS_STATUS.textContent =
-        `Done — ${state.verifiedOnly.length.toLocaleString()} verified, ` +
-        `${state.dropped.length.toLocaleString()} invalid, ` +
-        `${state.rows.length.toLocaleString()} total ` +
+        `Done — ${verifiedRows.length.toLocaleString()} verified, ` +
+        `${droppedRowsList.length.toLocaleString()} invalid ` +
         `(${reused ? "replaced existing tabs in target spreadsheet" : "new spreadsheet created"}).`;
       SHEETS_LINK.href = spreadsheetUrl;
       SHEETS_LINK.classList.remove("hidden");
