@@ -1,7 +1,7 @@
 """
 Email validation result cache.
 - Cache key: normalized email (lowercase)
-- TTL: configurable, default 30 days
+- TTL: configurable, default 365 days (1 year)
 - Storage: SQLite via SQLModel (same DB as jobs)
 - On cache hit: return stored verdict + provider data, skip all API calls
 - On cache miss: validate normally, then store result

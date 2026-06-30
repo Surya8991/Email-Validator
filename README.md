@@ -90,7 +90,7 @@ python -m uvicorn app.main:app --reload
 | `consensus` | $$$ | All providers in parallel, majority vote |
 | `waterfall` | $$ | Cascade, stop at first confident verdict |
 
-Cache hits short-circuit before any provider is called (TTL configurable per request, default 30d).
+Cache hits short-circuit before any provider is called (TTL configurable per request, default 365 days).
 
 ---
 
