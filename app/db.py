@@ -35,9 +35,21 @@ DATABASE_URL = _db_url()
 engine = create_engine(DATABASE_URL, **_engine_kwargs())
 
 
-def create_db_tables() -> None:
+def create_db_tables(skip_migrations: bool = False) -> None:
+    """Ensure all SQLModel tables exist + (optionally) run lightweight
+    migrations.
+
+    `skip_migrations=True` is used by worker scripts (process_job.py,
+    retry_unknowns.py, ...) that run inside a GitHub Actions worker
+    concurrently with other workers. Without it, each concurrent
+    worker tries to grab `ACCESS EXCLUSIVE` on every table being
+    ALTERed while siblings hold `ACCESS SHARE` from regular SELECTs,
+    and Postgres deadlock-detects one of them dead (job 101 in prod).
+    Migrations are run from db_init.yml on every push to main, so
+    workers don't need to re-do that work."""
     SQLModel.metadata.create_all(engine)
-    _apply_lightweight_migrations()
+    if not skip_migrations:
+        _apply_lightweight_migrations()
 
 
 # (table, column, DDL fragment) — applied at startup with ADD COLUMN IF NOT EXISTS.
@@ -61,19 +73,45 @@ _PG_INDEX_ADDS: list[tuple[str, str]] = [
 ]
 
 
+_MIGRATION_ADVISORY_LOCK_KEY = 7331  # arbitrary; just needs to be unique-per-purpose
+
+
 def _apply_lightweight_migrations() -> None:
+    """Run ALTER TABLE / CREATE INDEX statements that aren't covered by
+    `SQLModel.metadata.create_all` (which only creates missing tables, not
+    new columns on existing ones).
+
+    Wrapped in a Postgres advisory lock so concurrent callers don't
+    serialize on `ACCESS EXCLUSIVE` (which is what caused the deadlock
+    that killed job 101 in prod when two workers ALTER'd `emailresult`
+    while a third held an `ACCESS SHARE` from a SELECT). Only one caller
+    actually runs the DDL; others return immediately. Idempotent — the
+    `IF NOT EXISTS` clauses make repeated runs no-ops anyway."""
     if not is_postgres():
         return
     from sqlalchemy import text
     with engine.begin() as conn:
-        for table, column, ddl in _PG_COLUMN_ADDS:
-            conn.execute(text(
-                f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
-            ))
-        for name, target in _PG_INDEX_ADDS:
-            conn.execute(text(
-                f'CREATE INDEX IF NOT EXISTS {name} ON {target}'
-            ))
+        got_lock = conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"),
+            {"k": _MIGRATION_ADVISORY_LOCK_KEY},
+        ).scalar()
+        if not got_lock:
+            # Someone else is running migrations; trust them and move on.
+            return
+        try:
+            for table, column, ddl in _PG_COLUMN_ADDS:
+                conn.execute(text(
+                    f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}'
+                ))
+            for name, target in _PG_INDEX_ADDS:
+                conn.execute(text(
+                    f'CREATE INDEX IF NOT EXISTS {name} ON {target}'
+                ))
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:k)"),
+                {"k": _MIGRATION_ADVISORY_LOCK_KEY},
+            )
 
 
 def backfill_team_owners() -> None:
