@@ -645,19 +645,44 @@
     });
   }
 
-  function _rowsForTab(rows, extraColumns, extraValue) {
+  function _rowsForTab(headersList, rows, extraColumns, extraValue) {
     // Returns a 2D array: [headers, ...row-arrays]. Each row is the
-    // state.headers values plus any extraValue(row) appended in
-    // extraColumns order. `state.headers` is preserved column order so
+    // headersList values plus any extraValue(row) appended in
+    // extraColumns order. headersList preserves original column order
+    // (filtered to drop all-empty columns for the Sheets push) so
     // re-imports back into a CRM stay aligned.
-    const headers = [...state.headers, ...extraColumns];
+    const headers = [...headersList, ...extraColumns];
     const out = [headers];
     for (const r of rows) {
-      const base = state.headers.map((h) => (r[h] ?? "").toString());
+      const base = headersList.map((h) => (r[h] ?? "").toString());
       const extra = extraColumns.map((_, i) => extraValue(r, i));
       out.push([...base, ...extra]);
     }
     return out;
+  }
+
+  function _activeHeaders(rowSets) {
+    // Compute the subset of state.headers that has at least one
+    // non-empty value across the union of rowSets (each an array
+    // of row objects). Many CRM exports include hundreds of always-
+    // blank columns; pushing those to Sheets wastes the 10M
+    // cell-per-spreadsheet quota for zero information. Order
+    // preserved.
+    const nonEmpty = new Set();
+    for (const rows of rowSets) {
+      for (const r of rows) {
+        for (const h of state.headers) {
+          if (nonEmpty.has(h)) continue;
+          const v = r[h];
+          if (v !== null && v !== undefined && String(v).trim() !== "") {
+            nonEmpty.add(h);
+          }
+        }
+        // Early exit if every header already seen at least once.
+        if (nonEmpty.size === state.headers.length) return [...state.headers];
+      }
+    }
+    return state.headers.filter((h) => nonEmpty.has(h));
   }
 
   async function _writeTab(spreadsheetId, sheetTitle, values, statusPrefix) {
@@ -781,28 +806,37 @@
       await _ensureGoogleSdk();
       await _getAccessToken();
 
-      // 1. Build the three tabs' 2D arrays FIRST. Pre-size will be
-      //    derived from values.length below — NOT from `state.*` —
-      //    so the grid request always matches exactly what we're
-      //    about to write. Earlier revision read row counts from
-      //    state.verifiedOnly / state.dropped / state.rows and any
-      //    divergence between those and the built arrays collapsed
-      //    the grid to 1 row, letting the first 5,000-row PUT expand
-      //    to exactly 5,000 rows and the next PUT at A5001 trip
-      //    INVALID_ARGUMENT "Max rows: 5000".
+      // 1. Drop columns that are 100% empty across the data we're
+      //    about to push. Wide CRM exports routinely carry hundreds
+      //    of always-blank columns; including them wastes the
+      //    Sheets 10M cell-per-spreadsheet quota for zero info and
+      //    is what blew the create call with INVALID_ARGUMENT
+      //    "exceeds 10000000 cells" on a 481-column file.
+      SHEETS_STATUS.textContent = "Trimming empty columns…";
+      const activeHeaders = _activeHeaders([
+        state.verifiedOnly || [],
+        (state.dropped || []).map((d) => d.row),
+        state.rows,
+      ]);
+
+      // 2. Build the three tabs' 2D arrays FIRST. Pre-size below is
+      //    derived from values.length / values[0].length so the grid
+      //    request always matches exactly what we're about to write.
       const verifiedValues = _rowsForTab(
-        state.verifiedOnly || [], [], () => "",
+        activeHeaders, state.verifiedOnly || [], [], () => "",
       );
       const droppedValues = _rowsForTab(
+        activeHeaders,
         (state.dropped || []).map((d) => d.row),
         ["drop_reason"],
         (_r, _i) => "",  // placeholder — replaced below by walking dropped[]
       );
       // Fix drop_reason values now that we have the wrapper:
       (state.dropped || []).forEach((d, idx) => {
-        droppedValues[idx + 1][state.headers.length] = d.reason || "";
+        droppedValues[idx + 1][activeHeaders.length] = d.reason || "";
       });
       const allValues = _rowsForTab(
+        activeHeaders,
         state.rows,
         ["cache_verdict", "cache_validated_at"],
         (_r, _i) => "",
@@ -812,24 +846,48 @@
       state.rows.forEach((_r, idx) => {
         const v = verdicts[idx];
         const rowOut = allValues[idx + 1];
-        rowOut[state.headers.length] = v ? v.verdict : "";
-        rowOut[state.headers.length + 1] = v && v.validated_at ? v.validated_at : "";
+        rowOut[activeHeaders.length] = v ? v.verdict : "";
+        rowOut[activeHeaders.length + 1] = v && v.validated_at ? v.validated_at : "";
       });
 
-      // 2. Derive pre-size from the values arrays + a 1,000-row
-      //    safety buffer per tab. Buffer absorbs any future
-      //    off-by-one drift between values.length and what the
-      //    chunked PUTs actually address. +50 columns over
-      //    state.headers.length covers the appended drop_reason /
-      //    cache_verdict / cache_validated_at without recounting
-      //    per tab.
-      const ROW_BUFFER = 1000;
-      const colCount = state.headers.length + 50;
+      // 3. Derive pre-size from the values arrays + a small safety
+      //    buffer. Buffer absorbs any future off-by-one drift
+      //    between values.length and what the chunked PUTs
+      //    actually address. Buffers were +50 cols / +1000 rows;
+      //    on a 481-col CSV that alone burnt ~1.5M cells. Tightened
+      //    to +5 cols / +100 rows.
+      const ROW_BUFFER = 100;
+      const COL_EXTRA = 5;
+      // Each tab's actual width = activeHeaders.length + its own
+      // extra columns. Use values[0].length (header row) as the
+      // source of truth then add COL_EXTRA on top.
       const tabSpecs = [
-        { title: "Verified", rowCount: verifiedValues.length + ROW_BUFFER, columnCount: colCount },
-        { title: "Invalid",  rowCount: droppedValues.length  + ROW_BUFFER, columnCount: colCount },
-        { title: "All",      rowCount: allValues.length      + ROW_BUFFER, columnCount: colCount },
+        { title: "Verified", rowCount: verifiedValues.length + ROW_BUFFER, columnCount: verifiedValues[0].length + COL_EXTRA },
+        { title: "Invalid",  rowCount: droppedValues.length  + ROW_BUFFER, columnCount: droppedValues[0].length  + COL_EXTRA },
+        { title: "All",      rowCount: allValues.length      + ROW_BUFFER, columnCount: allValues[0].length      + COL_EXTRA },
       ];
+
+      // 4. Pre-flight: refuse to call Sheets if our pre-sized grids
+      //    would breach the 10M cell-per-spreadsheet limit. Better
+      //    to fail loudly here than to wait for the API to reject
+      //    sheets[0] mid-create. Threshold 9.5M leaves a small
+      //    buffer for any built-in default-sheet overhead.
+      const projectedCells = tabSpecs.reduce(
+        (acc, s) => acc + s.rowCount * s.columnCount, 0,
+      );
+      const CELL_LIMIT = 9_500_000;
+      if (projectedCells > CELL_LIMIT) {
+        throw new Error(
+          `Sheet too large: ${projectedCells.toLocaleString()} cells ` +
+          `(${activeHeaders.length} active cols × ` +
+          `${state.rows.length.toLocaleString()} rows) exceeds Sheets' ` +
+          `10M cell-per-spreadsheet limit. Drop unused CSV columns ` +
+          `before pushing, or use the CSV downloads instead.`,
+        );
+      }
+      SHEETS_STATUS.textContent =
+        `Dropped ${state.headers.length - activeHeaders.length} empty columns ` +
+        `(${activeHeaders.length} active). ${projectedCells.toLocaleString()} cells.`;
 
       // 3. Resolve the destination spreadsheet. Two paths:
       //    a) If GOOGLE_SHEETS_TARGET_ID is set AND we can read it →
