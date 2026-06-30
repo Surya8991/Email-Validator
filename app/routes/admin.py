@@ -7,6 +7,7 @@ import secrets
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 import bcrypt
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -474,13 +475,16 @@ async def admin_send_invite(
             logging.getLogger(__name__).exception("Invite email send failed: %s", e)
             mail_status = "failed"
 
-    return RedirectResponse(
-        url=(
-            f"/admin/users?invite_url={invite_url}"
-            f"&invite_email={email}&invite_mail={mail_status}"
-        ),
-        status_code=302,
-    )
+    # urlencode-everything — `email` is user input from Form(), and `&` in a
+    # legitimate-shaped address (e.g. `foo&utm=x@bar.com`) would otherwise
+    # split into extra query params downstream. Also flagged by CodeQL
+    # (py/url-redirection) as a stored-redirect vector.
+    qs = urlencode({
+        "invite_url": invite_url,
+        "invite_email": email,
+        "invite_mail": mail_status,
+    })
+    return RedirectResponse(url=f"/admin/users?{qs}", status_code=302)
 
 
 @router.post("/invites/{invite_id}/revoke")
@@ -933,7 +937,7 @@ async def admin_edit_team(
 ):
     name = name.strip()
     if not name:
-        return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+        return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
     with Session(engine) as db:
         team = db.get(Team, team_id)
         if team:
@@ -946,7 +950,7 @@ async def admin_edit_team(
             team.description = description.strip()
             _log_audit("team.edit", current_user, "team", str(team_id), team.name, db)
             db.commit()
-    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
 
 @router.get("/teams/{team_id}", response_class=HTMLResponse)
@@ -1010,7 +1014,7 @@ async def admin_approve_membership(
             notify_user_id = m.user_id
         if notify_user_id is not None:
             await _notify_team_decision(request, db, team_id, notify_user_id, "approved")
-    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
 
 @router.post("/teams/{team_id}/reject/{membership_id}")
@@ -1027,7 +1031,7 @@ async def admin_reject_membership(
             notify_user_id = m.user_id
         if notify_user_id is not None:
             await _notify_team_decision(request, db, team_id, notify_user_id, "rejected")
-    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
 
 @router.post("/teams/{team_id}/transfer/{user_id}")
@@ -1044,7 +1048,7 @@ async def admin_transfer_team_ownership(
         ).first()
         # Target must be an existing active member, and not already the owner.
         if not target or target.role == "owner":
-            return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+            return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
         current_owner = db.exec(
             select(TeamMembership).where(
@@ -1060,7 +1064,7 @@ async def admin_transfer_team_ownership(
             f"new_owner_user_id={user_id}", db,
         )
         db.commit()
-    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
 
 @router.post("/teams/{team_id}/remove/{user_id}")
@@ -1076,7 +1080,7 @@ async def admin_remove_member(
         if m and m.role != "owner":
             db.delete(m)
             db.commit()
-    return RedirectResponse(url=f"/admin/teams/{team_id}", status_code=302)
+    return RedirectResponse(url=f"/admin/teams/{int(team_id)}", status_code=302)
 
 
 @router.post("/teams/{team_id}/delete")
