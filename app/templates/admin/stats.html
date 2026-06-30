@@ -47,9 +47,14 @@
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
 
-    <!-- Verdict breakdown -->
-    <div class="card p-5">
-      <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Verdict breakdown</h3>
+    <!-- Verdict breakdown (auto-refresh every 60s) -->
+    <div id="admin-verdict-breakdown" class="card p-5"
+      hx-get="/admin/stats" hx-trigger="every 60s"
+      hx-select="#admin-verdict-breakdown" hx-swap="outerHTML">
+      <div class="flex items-baseline justify-between mb-4">
+        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Verdict breakdown</h3>
+        <span class="text-[10px] text-gray-400">EmailResult · refresh 60s</span>
+      </div>
       {% set total_v = verdict_counts.values() | sum %}
       {% if total_v > 0 %}
         {% for verdict, count in verdict_counts.items() %}

@@ -47,12 +47,21 @@
     {% include "partials/job_progress.html" %}
   </div>
 
-  <!-- Verdict summary -->
+  <!-- Verdict summary (auto-refresh every 60s while job is in flight; static once done/failed) -->
   {% set v = job.verdicts or {} %}
   {% set vt = (v.valid or 0) + (v.invalid or 0) + (v.risky or 0) + (v.unknown or 0) %}
   {% if vt > 0 %}
-  <div class="card p-5">
-    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Verdict breakdown</h2>
+  <div id="job-verdict-card" class="card p-5"
+    {% if job.status in ['queued','running'] %}
+    hx-get="/jobs/{{ job.id }}" hx-trigger="every 60s"
+    hx-select="#job-verdict-card" hx-swap="outerHTML"
+    {% endif %}>
+    <div class="flex items-baseline justify-between mb-3">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Verdict breakdown</h2>
+      <span class="text-[10px] text-gray-400">
+        EmailResult{% if job.status in ['queued','running'] %} · refresh 60s{% endif %}
+      </span>
+    </div>
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
       <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
         <div class="text-xs uppercase tracking-wide text-gray-500">Total</div>
