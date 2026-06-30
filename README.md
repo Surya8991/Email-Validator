@@ -56,6 +56,7 @@ python -m uvicorn app.main:app --reload
    | `MAX_BULK_EMAILS` | `1000` | Per-CSV upload cap. 400 if exceeded. `0` disables. |
    | `MAX_USER_ACTIVE_JOBS` | `4` | Per-user queued+running jobs cap. 429 if exceeded. |
    | `MAX_USER_ACTIVE_EMAILS` | `2000` | Per-user sum-of-pending-emails cap. 429 if exceeded. |
+   | `MAX_QUEUED_WORKFLOW_RUNS` | `10` | Cap on GitHub Actions runs sitting in `queued` state. `/api/bulk` and `/admin/retry-unknowns` return 429 when a new dispatch would push the queue past this. Workflow concurrency separately caps in-flight runs at 3. `0` disables. |
    | `UNKNOWN_STRIKES` | `3` | After this many failed retries, `EmailResult.verdict` flips from `unknown` to `invalid` (see Retry sweep below). |
 
 3. Set these **GitHub Actions secrets** so the bulk + retry workers hit the same DB/provider as Vercel: `DATABASE_URL`, `BOUNCIFY_API_KEY`, `JOB_CALLBACK_TOKEN`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SUPERADMIN_EMAIL`.

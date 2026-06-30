@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # 0 disables the respective check.
     max_user_active_jobs: int = 4
     max_user_active_emails: int = 2000
+    # Global cap on workflow runs sitting in GitHub Actions' "queued"
+    # state. The workflow's own concurrency group already limits how
+    # many run in parallel (currently 3); this is the upstream gate
+    # that refuses *new* dispatches when too many are already waiting.
+    # 0 disables the check.
+    max_queued_workflow_runs: int = 10
 
     # GitHub Actions bulk processing
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs

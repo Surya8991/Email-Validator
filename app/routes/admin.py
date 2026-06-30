@@ -568,6 +568,21 @@ async def admin_retry_unknowns(
 
     dispatched: list[int] = []
     async with _httpx.AsyncClient(timeout=8.0) as client:
+        # Refuse the whole fan-out if the GHA queue is already full —
+        # 15 dispatches in a tight loop would otherwise blow past the cap.
+        cap = settings.max_queued_workflow_runs
+        if cap > 0:
+            from app.routes.api_bulk import _count_queued_workflow_runs
+            queued = await _count_queued_workflow_runs(client, "retry_unknowns.yml")
+            if queued >= cap:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"Retry queue is full: {queued} retry runs are already "
+                        f"waiting (cap: {cap}). Wait for some to start before "
+                        f"dispatching more."
+                    ),
+                )
         for bucket in range(num_buckets):
             inputs = dict(base_inputs, bucket=str(bucket))
             resp = await client.post(
