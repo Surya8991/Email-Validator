@@ -144,6 +144,35 @@
         </button>
       </div>
     </div>
+
+    {% if google_oauth_client_id %}
+    <!-- Push to Google Sheets — creates a new spreadsheet with three
+         tabs (Verified / Invalid / All) under the user's own Drive.
+         Browser-direct via OAuth + Sheets API; no server detour. -->
+    <div class="mt-2 pt-3 border-t border-dashed border-gray-200 dark:border-gray-800">
+      <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">
+        Push to Google Sheets (creates a new spreadsheet in your Drive)
+      </p>
+      <div class="flex flex-wrap items-center gap-3">
+        <button id="btn-push-sheets"
+          class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
+          📊 Push to Google Sheets
+        </button>
+        <span id="sheets-status" class="text-xs text-gray-500 dark:text-gray-400"></span>
+        <a id="sheets-link" href="#" target="_blank" rel="noopener"
+          class="hidden text-xs text-indigo-600 hover:underline font-medium">
+          Open spreadsheet →
+        </a>
+      </div>
+      <p class="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
+        Creates 3 tabs in one new spreadsheet: <strong>Verified</strong>,
+        <strong>Invalid</strong> (with drop_reason), and <strong>All</strong>
+        (annotated with cache_verdict). Signs in with your Google account
+        on first use; nothing leaves your browser except writes to the
+        Sheets API. Expect 30–90&nbsp;s for an 84k-row file.
+      </p>
+    </div>
+    {% endif %}
     <p class="text-xs text-gray-500 dark:text-gray-400 mt-4">
       Feed the "not in cache" file straight into the
       <a href="/" class="text-indigo-600 hover:underline">bulk uploader</a>
@@ -542,6 +571,200 @@
       "No dropped rows yet — run Filter rows first.",
     );
   });
+
+  // ---- Step 4c: push to Google Sheets ---------------------------------------
+  // Browser-direct: OAuth popup → Sheets API. Creates ONE new spreadsheet in
+  // the user's Drive with three tabs (Verified / Invalid / All).
+  //
+  // Why browser-direct: the cleanup data lives entirely in browser memory
+  // (84k × ~100 columns ≈ 80–100 MB). Routing through Vercel runs straight
+  // into the 4.5 MB body limit; a service-account flow on GHA can't see the
+  // browser's filtered state without uploading first. Browser → Sheets API
+  // skips the detour.
+  //
+  // Auth: GIS (Google Identity Services) for the access token + REST API
+  // for the writes. The OAuth client ID is server-injected via the Jinja
+  // template (it's PUBLIC — security is the authorized-origin allowlist
+  // configured in Google Cloud Console).
+  const SHEETS_BTN = $("btn-push-sheets");
+  const SHEETS_STATUS = $("sheets-status");
+  const SHEETS_LINK = $("sheets-link");
+  const GOOGLE_OAUTH_CLIENT_ID = {{ google_oauth_client_id | tojson }};
+  const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+  // 5,000 rows per batchUpdate. Sheets API limit is ~2 MB per request; with
+  // wide CRM rows (~1.5 KB each) 5k rows is ~7.5 MB raw but JSON-encoded
+  // strings stay safely under the cap when chunked this way.
+  const SHEETS_CHUNK = 5000;
+
+  let _googleTokenClient = null;
+  let _googleToken = null;
+
+  function _ensureGoogleSdk() {
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://accounts.google.com/gsi/client";
+      s.async = true;
+      s.defer = true;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+      document.head.appendChild(s);
+    });
+  }
+
+  function _getAccessToken() {
+    if (_googleToken) return Promise.resolve(_googleToken);
+    return new Promise((resolve, reject) => {
+      _googleTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_OAUTH_CLIENT_ID,
+        scope: SHEETS_SCOPE,
+        callback: (resp) => {
+          if (resp.error) return reject(new Error(resp.error_description || resp.error));
+          _googleToken = resp.access_token;
+          resolve(_googleToken);
+        },
+      });
+      _googleTokenClient.requestAccessToken({ prompt: "" });
+    });
+  }
+
+  function _rowsForTab(rows, extraColumns, extraValue) {
+    // Returns a 2D array: [headers, ...row-arrays]. Each row is the
+    // state.headers values plus any extraValue(row) appended in
+    // extraColumns order. `state.headers` is preserved column order so
+    // re-imports back into a CRM stay aligned.
+    const headers = [...state.headers, ...extraColumns];
+    const out = [headers];
+    for (const r of rows) {
+      const base = state.headers.map((h) => (r[h] ?? "").toString());
+      const extra = extraColumns.map((_, i) => extraValue(r, i));
+      out.push([...base, ...extra]);
+    }
+    return out;
+  }
+
+  async function _writeTab(spreadsheetId, sheetTitle, values, statusPrefix) {
+    // values is [[header], [row], [row], ...]. Chunk and PUT via
+    // values.update — Sheets auto-extends the grid as needed.
+    let written = 0;
+    const total = values.length;
+    for (let i = 0; i < total; i += SHEETS_CHUNK) {
+      const chunk = values.slice(i, i + SHEETS_CHUNK);
+      // Use A1 with explicit start row. Sheet grid grows automatically.
+      const startRow = i + 1;
+      const range = `${sheetTitle}!A${startRow}`;
+      const resp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${_googleToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ range, majorDimension: "ROWS", values: chunk }),
+        },
+      );
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Sheets API ${resp.status}: ${txt.slice(0, 300)}`);
+      }
+      written += chunk.length;
+      SHEETS_STATUS.textContent =
+        `${statusPrefix} ${written.toLocaleString()} / ${total.toLocaleString()} rows…`;
+    }
+  }
+
+  async function _pushToSheets() {
+    if (!state.kept || state.kept.length === 0) {
+      alert("Run Filter rows first.");
+      return;
+    }
+    SHEETS_BTN.disabled = true;
+    SHEETS_LINK.classList.add("hidden");
+    SHEETS_STATUS.textContent = "Authorizing…";
+    try {
+      await _ensureGoogleSdk();
+      await _getAccessToken();
+
+      // 1. Create a new spreadsheet with the three named tabs in one call.
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      SHEETS_STATUS.textContent = "Creating spreadsheet…";
+      const createResp = await fetch(
+        "https://sheets.googleapis.com/v4/spreadsheets",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${_googleToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            properties: { title: `${baseName()} — cleanup ${stamp}` },
+            sheets: [
+              { properties: { title: "Verified" } },
+              { properties: { title: "Invalid" } },
+              { properties: { title: "All" } },
+            ],
+          }),
+        },
+      );
+      if (!createResp.ok) {
+        throw new Error(`Spreadsheet create failed: ${await createResp.text()}`);
+      }
+      const created = await createResp.json();
+      const spreadsheetId = created.spreadsheetId;
+      const spreadsheetUrl = created.spreadsheetUrl;
+
+      // 2. Build the three tabs' 2D arrays.
+      const verifiedValues = _rowsForTab(
+        state.verifiedOnly || [], [], () => "",
+      );
+      const droppedValues = _rowsForTab(
+        (state.dropped || []).map((d) => d.row),
+        ["drop_reason"],
+        (_r, _i) => "",  // placeholder — replaced below by walking dropped[]
+      );
+      // Fix drop_reason values now that we have the wrapper:
+      (state.dropped || []).forEach((d, idx) => {
+        droppedValues[idx + 1][state.headers.length] = d.reason || "";
+      });
+      const allValues = _rowsForTab(
+        state.rows,
+        ["cache_verdict", "cache_validated_at"],
+        (_r, _i) => "",
+      );
+      // Annotate the All tab from the per-row verdicts cached during filter.
+      const verdicts = state.rowVerdicts || [];
+      state.rows.forEach((_r, idx) => {
+        const v = verdicts[idx];
+        const rowOut = allValues[idx + 1];
+        rowOut[state.headers.length] = v ? v.verdict : "";
+        rowOut[state.headers.length + 1] = v && v.validated_at ? v.validated_at : "";
+      });
+
+      // 3. Write each tab. Verified first (smallest of the kept), then Invalid,
+      //    then All (largest). Each write is chunked under the hood.
+      await _writeTab(spreadsheetId, "Verified", verifiedValues, "Verified:");
+      await _writeTab(spreadsheetId, "Invalid", droppedValues, "Invalid:");
+      await _writeTab(spreadsheetId, "All", allValues, "All:");
+
+      SHEETS_STATUS.textContent =
+        `Done — ${state.verifiedOnly.length.toLocaleString()} verified, ` +
+        `${state.dropped.length.toLocaleString()} invalid, ` +
+        `${state.rows.length.toLocaleString()} total.`;
+      SHEETS_LINK.href = spreadsheetUrl;
+      SHEETS_LINK.classList.remove("hidden");
+      window.open(spreadsheetUrl, "_blank", "noopener");
+    } catch (e) {
+      console.error(e);
+      SHEETS_STATUS.textContent = "Failed: " + (e && e.message ? e.message : e);
+    } finally {
+      SHEETS_BTN.disabled = false;
+    }
+  }
+
+  if (SHEETS_BTN) {
+    SHEETS_BTN.addEventListener("click", _pushToSheets);
+  }
 })();
 </script>
 {% endblock %}

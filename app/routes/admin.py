@@ -621,6 +621,7 @@ async def account_cleanup_page(request: Request, current_user: User = Depends(re
     CRM export off Vercel's 4.5 MB request-body limit."""
     return templates.TemplateResponse(request, "admin/account_cleanup.html", {
         **_admin_ctx("account-cleanup", current_user),
+        "google_oauth_client_id": settings.google_oauth_client_id,
     })
 
 
