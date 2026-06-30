@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-29 (Session 21). Current VERSION: **0.14**
+> Last updated: 2026-06-30 (Session 22). Current VERSION: **0.15**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -55,6 +55,55 @@
 - Pass bare integer inputs from a `schedule:`-triggered workflow to argparse `type=int` params — when `schedule:` fires, all `inputs.*` are empty strings. `argparse` rejects `--batch-size ""` with a type error. Always use `${{ inputs.foo || 'default' }}` fallbacks on every env var that feeds a numeric CLI flag (see `retry_unknowns.yml`).
 - Bring back SELECT-then-INSERT in `app/core/cache.py:set_cache`. Session 18 switched to `INSERT ... ON CONFLICT (email) DO UPDATE` because two parallel workers (or two tasks in the same asyncio.gather chunk hitting a duplicated CSV email) were racing on the SELECT-then-INSERT and tripping `ix_emailcache_email`, crashing the worker mid-write and losing the already-validated rows of that job. UPSERT is the only correct shape; preserve it on both Postgres (`postgresql.insert`) and SQLite (`sqlite.insert`) branches.
 - Render Job owner email in places that read `_JOB_LIST_COLS` without re-joining `User` — Session 18 added `Job.user_id` + `User.email` to the SELECT in `_list_jobs_lightweight`, `_dashboard_aggregates.recent`, and the `/jobs/{id}` query, but **not** to the 2-second poll partial `/jobs/{id}/status` (intentional — it's a hot path). If you add owner-email to a new surface, join `User` there too.
+- Call `create_db_tables()` from worker scripts (`process_job.py`, `retry_unknowns.py`, etc.) without `skip_migrations=True`. Session 22 fixed a prod deadlock where 3 concurrent workers all ran `_apply_lightweight_migrations()` and raced `ACCESS EXCLUSIVE` against siblings' `ACCESS SHARE` — Postgres killed job 101. Migrations run on every push via `db_init.yml`; workers should pass `skip_migrations=True`. `_apply_lightweight_migrations()` itself now wraps DDL in `pg_try_advisory_lock(7331)` as a belt-and-suspenders, but the worker scripts should still skip it.
+- Make `_count_queued_workflow_runs()` raise on GitHub API errors. Session 22 made it best-effort (returns 0 on any failure) so a transient 5xx never blocks bulk uploads. If you "improve" it by surfacing errors, every Vercel hiccup from GitHub becomes a 502 on `/api/bulk`.
+- Bump the workflow `concurrency:` group past 3 buckets without ALSO raising the app-side queue cap. Session 22 kept concurrency at 3 (Bouncify rate-limits past that produce 'unknown') and added `MAX_QUEUED_WORKFLOW_RUNS=10` as a separate dimension. Conflating the two breaks the contract — workers should run 3-at-a-time, the queue caps how many wait.
+
+---
+
+## Session 22 — 2026-06-30 — v0.15 stats & queue overhaul + deadlock fix
+
+Six PRs landed in one session, ending with a hot-fix for a production crash uncovered by the new queue cap.
+
+**Per-job + per-user stats surfaces (#24)**
+- New `_job_verdict_counts(session, job_ids)` helper — one batched `GROUP BY job_id, verdict` keyed off the existing `EmailResult.job_id` index. Returns `{job_id: {valid: N, invalid: N, risky: N, unknown: N}}` with zeros filled.
+- `/jobs` rows render inline `✓N ✗N ⚠N ?N` chips under the progress bar; `/jobs/{id}` grows a top "Verdict breakdown" card with per-verdict counts + percentages + stacked bar.
+- `/admin/usage` per-user table gains a "Verdict mix" column (mini bar + counts) and a "Download" column. Old N+1 (2 queries × users) is replaced with one `GROUP BY user_id` aggregate.
+- **New `GET /admin/users/{user_id}/emails.csv?verdict=all|valid|invalid|risky|unknown`** — admin-only, streams every `EmailResult` the user owns across all their jobs.
+- Same `_per_user_verdict_stats()` panel rendered above the filter bar on `/jobs` for everyone (capped at top 30 by total processed). Collapsible `<details>`, source labelled "EmailResult".
+- Cache verdict dashboard partial (`partials/cache_stats.html`) shared between `/cache` (admin) and `/cache_user` (regular users).
+
+**Wider `/jobs` container (#25)**
+- `base.html` `<main>`'s max-width is now a `{% block main_max_w %}max-w-5xl{% endblock %}` so individual pages can override. `jobs.html` overrides to `max-w-7xl` (1280 px, +25%) — the 8-column tables (per-user stats + jobs list) no longer wrap.
+
+**60-second auto-refresh across every stat surface (#26)**
+- htmx `hx-get / hx-trigger="every 60s" / hx-select / hx-swap="outerHTML"` wrappers on: dashboard stat cards, dashboard verdict distribution, `partials/cache_stats.html` grid (shared by `/cache` and `/cache_user`), `/jobs` per-user stats `<details>`, `/admin/stats` verdict breakdown, `/admin/usage` table, `/jobs/{id}` verdict card (only while queued/running).
+- `_DASHBOARD_TTL` lowered 30s → 10s so the 60s tick always picks up fresh data.
+- Inline source-of-truth labels: each surface spells out which table it reads from (EmailResult vs EmailCache) so the cross-page numeric gap (unknowns, dedup) is no longer mysterious.
+
+**GHA queue cap (#27)**
+- New `MAX_QUEUED_WORKFLOW_RUNS=10` setting (configurable, `0` disables). Workflow concurrency still caps **running** at 3.
+- `_count_queued_workflow_runs(client, workflow_file)` helper in `api_bulk.py` best-effort queries `GET /repos/{repo}/actions/workflows/{file}/runs?status=queued`. Returns 0 on any error so a transient API hiccup never blocks dispatch.
+- `/api/bulk` refuses with **429** before creating the Job row when bulk_process queue is already at cap (no leftover failed job to clean up). `_trigger_github_actions` keeps the same check as a backstop for the race window.
+- `/admin/retry-unknowns` runs the same gate upfront before the 15-bucket fan-out loop.
+
+**Clearer stat labels + cross-links (#28)**
+- Dashboard "Verdict Distribution" → **"Verdict Distribution (all validations)"** with explainer + "View the deduped cache state →" link.
+- Cache Browser subtitle clarifies "Unique emails currently stored in the 30-day cache" + "View all-time audit →" link back.
+- Cache verdict cards: `VALID / INVALID / RISKY / UNKNOWN` → **`CACHED VALID / CACHED INVALID / CACHED RISKY / CACHED UNKNOWN`** so the source is unambiguous at a glance.
+
+**Postgres migration deadlock fix (#29)**
+- **Production crash**: Job 101 died with `DeadlockDetected` on `ALTER TABLE emailresult ADD COLUMN IF NOT EXISTS retry_count`. Three concurrent workers all ran `_apply_lightweight_migrations()` at startup, racing on `ACCESS EXCLUSIVE` against siblings holding `ACCESS SHARE` from regular SELECTs. Postgres broke the cycle by killing one — bulk job 101 ate it.
+- **Two layered fixes**:
+  - New `create_db_tables(skip_migrations: bool = False)` kwarg. `scripts/process_job.py` and `scripts/retry_unknowns.py` pass `skip_migrations=True`. Migrations already run on every push via `db_init.yml`, so workers don't need to redo them.
+  - Belt-and-suspenders: `_apply_lightweight_migrations()` now wraps the DDL block in `pg_try_advisory_lock(7331)`. If two callers race anyway, only one runs the ALTERs; the other returns immediately. Idempotent — `IF NOT EXISTS` is a no-op on the second pass.
+
+**Operational**
+- 47/47 tests pass (was 44 before session); 3 new tests in `tests/test_queue_cap.py`.
+- One conflict during merge (PR #28 vs #26 both rewrote dashboard "Verdict Distribution" header); resolved by keeping the auto-refresh wrapper from #26 with the cleaner title + cross-link from #28.
+
+**Required action after deploy**
+- Click **Retry** on `/jobs/101` to re-queue the run that died from the deadlock. The retry endpoint clears partial `EmailResult` rows and re-dispatches.
 
 ---
 

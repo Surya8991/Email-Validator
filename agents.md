@@ -3,7 +3,7 @@
 ## Overview
 FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
-Current version: **0.10.3** (verify_bulk rewritten to match real Bouncify 5-endpoint flow; opt-in via `BOUNCIFY_BULK=1`. See PROJECT_LOG.md Session 17.)
+Current version: **0.15** — stats + queue overhaul: per-job verdict chips, per-user CSV export, 60s htmx auto-refresh, 10-run GHA queue cap, clearer source labels + cross-links, Postgres migration-deadlock fix. See PROJECT_LOG.md Session 22.
 
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)

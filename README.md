@@ -6,7 +6,7 @@
 
 Multi-provider email validator (Bouncify + free local stack) with auth, bulk CSV/XLSX processing, caching, and an admin panel. FastAPI on Vercel + Neon Postgres + GitHub Actions for long-running bulk jobs.
 
-Current version: **0.14** — Filtered CSV exports on every list page (`/jobs`, `/admin/users`, `/admin/usage`); existing `/cache` + `/admin/audit-log` exports already honored filters. Prior in **0.13**: filters & pagination across high-traffic pages + audit-log count bug fix. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 21.
+Current version: **0.15** — Stats + queue overhaul: per-job verdict chips on `/jobs`, per-user CSV export, 60s htmx auto-refresh across every stat card, 10-run GHA queue cap, clearer source labels + cross-links between Dashboard ↔ Cache, Postgres migration-deadlock fix. See [PROJECT_LOG.md](PROJECT_LOG.md) Session 22.
 
 ---
 
