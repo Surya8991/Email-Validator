@@ -33,12 +33,15 @@
 
   {% set is_admin_user = current_user and current_user.role in ('admin', 'superadmin') %}
 
-  <!-- Per-user verdict stats (top 30 users by total emails) -->
+  <!-- Per-user verdict stats (top 30 users by total emails, auto-refresh 60s) -->
   {% if user_stats %}
-  <details class="card overflow-hidden" open>
+  <details id="jobs-user-stats" class="card overflow-hidden" open
+    hx-get="/jobs{% if status_filter or owner_filter %}?{% endif %}{% if status_filter %}status={{ status_filter }}{% endif %}{% if status_filter and owner_filter %}&{% endif %}{% if owner_filter %}owner={{ owner_filter }}{% endif %}"
+    hx-trigger="every 60s"
+    hx-select="#jobs-user-stats" hx-swap="outerHTML">
     <summary class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 cursor-pointer select-none">
       <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">Per-user verdict stats</span>
-      <span class="text-xs text-gray-400 ml-2">top {{ user_stats | length }} by emails processed</span>
+      <span class="text-xs text-gray-400 ml-2">top {{ user_stats | length }} by emails processed · auto-refresh 60s · source: EmailResult</span>
     </summary>
     <table class="w-full text-sm">
       <thead class="bg-gray-50 dark:bg-gray-800/50">

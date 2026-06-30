@@ -1,9 +1,16 @@
 {# Verdict-count dashboard for /cache (admin + user view). Surfaces the
    total cache size and the per-verdict breakdown. 'unknown' is intentionally
    never cached (validator skips set_cache for it), so that count is always
-   0 — kept in the layout so the grid stays a clean 5-up. #}
+   0 — kept in the layout so the grid stays a clean 5-up.
+
+   Auto-refreshes every 60s by re-fetching /cache and picking this grid
+   back out by id, so the numbers stay aligned with the dashboard's
+   own 60s tick. #}
 {% set cs = cache_stats or {"total": 0, "valid": 0, "invalid": 0, "risky": 0, "unknown": 0} %}
-<div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+<div id="cache-stats-grid"
+  class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm"
+  hx-get="/cache" hx-trigger="every 60s"
+  hx-select="#cache-stats-grid" hx-swap="outerHTML">
   <div class="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
     <div class="text-xs uppercase tracking-wide text-gray-500">Total cached</div>
     <div class="text-xl font-semibold">{{ cs.total }}</div>
