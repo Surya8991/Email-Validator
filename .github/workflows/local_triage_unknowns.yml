@@ -1,0 +1,59 @@
+name: Local Triage Unknowns
+
+# Runs the LocalProvider (free syntax + MX check, no API credit) on every
+# remaining 'unknown' EmailResult and flips the ones local says are
+# 'invalid' to invalid. Use to drain the unknown pool cheaply.
+#
+# Trigger:
+#   gh workflow run local_triage_unknowns.yml                       # default
+#   gh workflow run local_triage_unknowns.yml -f dry_run=true       # preview
+#   gh workflow run local_triage_unknowns.yml -f aggressive=true    # also flip risky
+#   gh workflow run local_triage_unknowns.yml -f min_retry_count=1  # only retried
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print distribution without flipping (default false)"
+        required: false
+        type: boolean
+        default: false
+      aggressive:
+        description: "Also flip local 'risky' (disposable) results"
+        required: false
+        type: boolean
+        default: false
+      min_retry_count:
+        description: "Only process unknowns with retry_count >= this (default 0)"
+        required: false
+        type: string
+        default: "0"
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Local triage
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MIN_RC: ${{ inputs.min_retry_count || '0' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          AGGRESSIVE: ${{ inputs.aggressive }}
+          CHUNK_SIZE: ${{ vars.CHUNK_SIZE || '20' }}
+          PROGRESS_EVERY: ${{ vars.PROGRESS_EVERY || '200' }}
+        run: |
+          ARGS=(--min-retry-count "$MIN_RC")
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          if [ "$AGGRESSIVE" = "true" ]; then ARGS+=(--aggressive); fi
+          python scripts/local_triage_unknowns.py "${ARGS[@]}"
