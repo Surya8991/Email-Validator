@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # 0 disables the check.
     max_queued_workflow_runs: int = 10
 
+    # Google OAuth client ID (PUBLIC value — safe to embed in templates).
+    # Used by the /admin/account-cleanup "Push to Google Sheets" button.
+    # If blank, the button is hidden. Set this in Vercel env. No secret
+    # required — Google's web OAuth client IDs are designed to be public
+    # (the authorized-origin allowlist is the actual security boundary).
+    google_oauth_client_id: str = ""
+
     # GitHub Actions bulk processing
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs
     github_pat: str = ""
