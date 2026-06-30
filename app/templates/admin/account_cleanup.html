@@ -146,12 +146,15 @@
     </div>
 
     {% if google_oauth_client_id %}
-    <!-- Push to Google Sheets — creates a new spreadsheet with three
-         tabs (Verified / Invalid / All) under the user's own Drive.
-         Browser-direct via OAuth + Sheets API; no server detour. -->
+    <!-- Push to Google Sheets — overwrites the configured target
+         spreadsheet's Verified / Invalid / All tabs (clears + resizes
+         + rewrites). Falls back to creating a fresh spreadsheet if the
+         target is missing or the user has no access. Browser-direct
+         via OAuth + Sheets API; no server detour. -->
     <div class="mt-2 pt-3 border-t border-dashed border-gray-200 dark:border-gray-800">
       <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">
-        Push to Google Sheets (creates a new spreadsheet in your Drive)
+        Push to Google Sheets
+        {% if google_sheets_target_id %}(replaces target spreadsheet's 3 tabs){% else %}(creates a new spreadsheet in your Drive){% endif %}
       </p>
       <div class="flex flex-wrap items-center gap-3">
         <button id="btn-push-sheets"
@@ -165,11 +168,20 @@
         </a>
       </div>
       <p class="text-[10px] text-gray-400 mt-1.5 leading-relaxed">
-        Creates 3 tabs in one new spreadsheet: <strong>Verified</strong>,
+        Writes 3 tabs &mdash; <strong>Verified</strong>,
         <strong>Invalid</strong> (with drop_reason), and <strong>All</strong>
-        (annotated with cache_verdict). Signs in with your Google account
-        on first use; nothing leaves your browser except writes to the
-        Sheets API. Expect 30–90&nbsp;s for an 84k-row file.
+        (annotated with cache_verdict).
+        {% if google_sheets_target_id %}
+          Updates the configured target spreadsheet in place: existing
+          Verified / Invalid / All tabs are cleared and rewritten; any
+          other tabs in that spreadsheet are left alone. If the target
+          can't be reached, a new spreadsheet is created as fallback.
+        {% else %}
+          Creates a new spreadsheet in your Drive each run.
+        {% endif %}
+        Signs in with your Google account on first use; nothing leaves
+        your browser except writes to the Sheets API. Expect
+        30–90&nbsp;s for an 84k-row file.
       </p>
     </div>
     {% endif %}
@@ -590,6 +602,11 @@
   const SHEETS_STATUS = $("sheets-status");
   const SHEETS_LINK = $("sheets-link");
   const GOOGLE_OAUTH_CLIENT_ID = {{ google_oauth_client_id | tojson }};
+  // Optional fixed-target spreadsheet ID. When set, each push REPLACES
+  // the Verified / Invalid / All tabs inside this spreadsheet instead
+  // of creating a fresh one. Blank ⇒ always create. Inaccessible
+  // (404/403/network) ⇒ silently fall back to create.
+  const GOOGLE_SHEETS_TARGET_ID = {{ google_sheets_target_id | tojson }};
   const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
   // 5,000 rows per batchUpdate. Sheets API limit is ~2 MB per request; with
   // wide CRM rows (~1.5 KB each) 5k rows is ~7.5 MB raw but JSON-encoded
@@ -674,6 +691,84 @@
     }
   }
 
+  async function _prepareTargetTabs(info, tabSpecs) {
+    // info is the GET /spreadsheets/{id} response (fields=sheets.properties).
+    // tabSpecs = [{title, rowCount, columnCount}]. For each spec:
+    //   - if the tab exists → clear its values, then resize its grid
+    //   - if the tab is missing → add it with the desired grid size
+    // Other tabs in the spreadsheet are left strictly untouched.
+    // Order matters: CLEAR first, then resize. Shrinking a grid that
+    // contains data outside the new bounds is rejected by Sheets, so
+    // emptying the tab before resize keeps every prior run's row
+    // count from blocking the next.
+    const existing = {};
+    for (const s of info.sheets || []) {
+      existing[s.properties.title] = s.properties;
+    }
+    const spreadsheetId = info.spreadsheetId;
+    const authHeaders = {
+      Authorization: `Bearer ${_googleToken}`,
+      "Content-Type": "application/json",
+    };
+
+    // 1. Clear existing target tabs (sequential — each :clear is a
+    //    single-tab op; parallelising adds little vs. the writes that
+    //    follow).
+    for (const spec of tabSpecs) {
+      if (!existing[spec.title]) continue;
+      SHEETS_STATUS.textContent = `Clearing existing ${spec.title} tab…`;
+      const clearResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(spec.title)}:clear`,
+        { method: "POST", headers: authHeaders },
+      );
+      if (!clearResp.ok) {
+        throw new Error(
+          `Clear "${spec.title}" failed: ${await clearResp.text()}`,
+        );
+      }
+    }
+
+    // 2. One batchUpdate: resize existing tabs and add missing ones.
+    const requests = [];
+    for (const spec of tabSpecs) {
+      const cur = existing[spec.title];
+      if (cur) {
+        requests.push({
+          updateSheetProperties: {
+            properties: {
+              sheetId: cur.sheetId,
+              gridProperties: { rowCount: spec.rowCount, columnCount: spec.columnCount },
+            },
+            fields: "gridProperties.rowCount,gridProperties.columnCount",
+          },
+        });
+      } else {
+        requests.push({
+          addSheet: {
+            properties: {
+              title: spec.title,
+              gridProperties: { rowCount: spec.rowCount, columnCount: spec.columnCount },
+            },
+          },
+        });
+      }
+    }
+    if (requests.length) {
+      SHEETS_STATUS.textContent = "Resizing target tabs…";
+      const buResp = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+        {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ requests }),
+        },
+      );
+      if (!buResp.ok) {
+        throw new Error(`batchUpdate failed: ${await buResp.text()}`);
+      }
+    }
+  }
+
   async function _pushToSheets() {
     if (!state.kept || state.kept.length === 0) {
       alert("Run Filter rows first.");
@@ -702,33 +797,78 @@
       const allRows = state.rows.length + 1;
       const colCount = baseCols + 50;
 
-      // 2. Create the new spreadsheet with all three tabs pre-sized.
+      // 2. Resolve the destination spreadsheet. Two paths:
+      //    a) If GOOGLE_SHEETS_TARGET_ID is set AND we can read it →
+      //       reuse it. Clear our 3 tabs (or add them if missing) and
+      //       resize their grids. Other tabs in the spreadsheet stay
+      //       untouched.
+      //    b) Otherwise → create a fresh spreadsheet (original
+      //       behaviour). Used as the fallback whenever (a) fails:
+      //       blank ID, 404 (deleted), 403 (no edit access), or any
+      //       network error.
+      const tabSpecs = [
+        { title: "Verified", rowCount: verifiedRows, columnCount: colCount },
+        { title: "Invalid",  rowCount: invalidRows,  columnCount: colCount },
+        { title: "All",      rowCount: allRows,      columnCount: colCount },
+      ];
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      SHEETS_STATUS.textContent = "Creating spreadsheet…";
-      const createResp = await fetch(
-        "https://sheets.googleapis.com/v4/spreadsheets",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${_googleToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            properties: { title: `${baseName()} — cleanup ${stamp}` },
-            sheets: [
-              { properties: { title: "Verified", gridProperties: { rowCount: verifiedRows, columnCount: colCount } } },
-              { properties: { title: "Invalid",  gridProperties: { rowCount: invalidRows,  columnCount: colCount } } },
-              { properties: { title: "All",      gridProperties: { rowCount: allRows,      columnCount: colCount } } },
-            ],
-          }),
-        },
-      );
-      if (!createResp.ok) {
-        throw new Error(`Spreadsheet create failed: ${await createResp.text()}`);
+
+      let spreadsheetId = null;
+      let spreadsheetUrl = null;
+      let reused = false;
+
+      if (GOOGLE_SHEETS_TARGET_ID) {
+        SHEETS_STATUS.textContent = "Checking target spreadsheet…";
+        try {
+          const infoResp = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(GOOGLE_SHEETS_TARGET_ID)}?fields=spreadsheetId,spreadsheetUrl,sheets(properties(sheetId,title))`,
+            { headers: { Authorization: `Bearer ${_googleToken}` } },
+          );
+          if (infoResp.ok) {
+            const info = await infoResp.json();
+            await _prepareTargetTabs(info, tabSpecs);
+            spreadsheetId = info.spreadsheetId;
+            spreadsheetUrl = info.spreadsheetUrl;
+            reused = true;
+          } else {
+            console.warn(
+              `Target spreadsheet inaccessible (${infoResp.status}); creating new one. Body:`,
+              await infoResp.text(),
+            );
+          }
+        } catch (e) {
+          console.warn("Target spreadsheet check failed, creating new one:", e);
+        }
       }
-      const created = await createResp.json();
-      const spreadsheetId = created.spreadsheetId;
-      const spreadsheetUrl = created.spreadsheetUrl;
+
+      if (!spreadsheetId) {
+        SHEETS_STATUS.textContent = "Creating spreadsheet…";
+        const createResp = await fetch(
+          "https://sheets.googleapis.com/v4/spreadsheets",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${_googleToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              properties: { title: `${baseName()} — cleanup ${stamp}` },
+              sheets: tabSpecs.map((spec) => ({
+                properties: {
+                  title: spec.title,
+                  gridProperties: { rowCount: spec.rowCount, columnCount: spec.columnCount },
+                },
+              })),
+            }),
+          },
+        );
+        if (!createResp.ok) {
+          throw new Error(`Spreadsheet create failed: ${await createResp.text()}`);
+        }
+        const created = await createResp.json();
+        spreadsheetId = created.spreadsheetId;
+        spreadsheetUrl = created.spreadsheetUrl;
+      }
 
       // 2. Build the three tabs' 2D arrays.
       const verifiedValues = _rowsForTab(
@@ -766,7 +906,8 @@
       SHEETS_STATUS.textContent =
         `Done — ${state.verifiedOnly.length.toLocaleString()} verified, ` +
         `${state.dropped.length.toLocaleString()} invalid, ` +
-        `${state.rows.length.toLocaleString()} total.`;
+        `${state.rows.length.toLocaleString()} total ` +
+        `(${reused ? "replaced existing tabs in target spreadsheet" : "new spreadsheet created"}).`;
       SHEETS_LINK.href = spreadsheetUrl;
       SHEETS_LINK.classList.remove("hidden");
       window.open(spreadsheetUrl, "_blank", "noopener");
