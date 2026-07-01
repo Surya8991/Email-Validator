@@ -109,7 +109,7 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 
 ### Optional — Google Sheets push (`/admin/account-cleanup`)
 - `GOOGLE_OAUTH_CLIENT_ID` — public web OAuth client ID. Blank hides the "Push to Google Sheets" button entirely.
-- `GOOGLE_SHEETS_TARGET_IDS` — comma-separated spreadsheet IDs, in order. Verified part 1 replaces target #1's `Verified` tab, part 2 replaces target #2's, etc. — strictly in that order, never a spreadsheet outside this list. Needing more parts than configured targets, or a target being inaccessible, fails the push loudly. Blank ⇒ creates fresh spreadsheets each run instead. Must be set on **Production** scope in Vercel, and requires a redeploy to take effect — editing a Vercel env var does not hot-reload the running deployment.
+- `GOOGLE_SHEETS_TARGET_IDS` (⚠️ **plural "SHEETS"** — `GOOGLE_SHEET_TARGET_IDS` silently does nothing, no error anywhere, see PROJECT_LOG Session 24) — comma-separated spreadsheet IDs, in order. Verified part 1 replaces target #1's `Verified` tab, part 2 replaces target #2's, etc. — strictly in that order, never a spreadsheet outside this list. Needing more parts than configured targets, or a target being inaccessible, fails the push loudly. Blank ⇒ creates fresh spreadsheets each run instead. Must be set on **Production** scope in Vercel, and requires a redeploy to take effect — editing a Vercel env var does not hot-reload the running deployment.
 
 ### Optional config
 - `CACHE_TTL_DAYS=365` — default result cache lifetime (1 year; was 30 prior to v0.16)
