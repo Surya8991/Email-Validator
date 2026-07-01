@@ -3,7 +3,7 @@
 ## Overview
 FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
-Current version: **0.15** — stats + queue overhaul: per-job verdict chips, per-user CSV export, 60s htmx auto-refresh, 10-run GHA queue cap, clearer source labels + cross-links, Postgres migration-deadlock fix. See PROJECT_LOG.md Session 22.
+Current version: **0.16** — CSP allowlist fixes (jsdelivr + Google Identity/Sheets) and Push-to-Google-Sheets hardening: Verified-only, fixed ordered target-spreadsheet list, row-count integrity check. See PROJECT_LOG.md Session 23.
 
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)
@@ -106,6 +106,10 @@ Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `userses
 
 ### Optional providers
 - `ZEROBOUNCE_API_KEY`, `NEVERBOUNCE_API_KEY`, `HUNTER_API_KEY`
+
+### Optional — Google Sheets push (`/admin/account-cleanup`)
+- `GOOGLE_OAUTH_CLIENT_ID` — public web OAuth client ID. Blank hides the "Push to Google Sheets" button entirely.
+- `GOOGLE_SHEETS_TARGET_IDS` — comma-separated spreadsheet IDs, in order. Verified part 1 replaces target #1's `Verified` tab, part 2 replaces target #2's, etc. — strictly in that order, never a spreadsheet outside this list. Needing more parts than configured targets, or a target being inaccessible, fails the push loudly. Blank ⇒ creates fresh spreadsheets each run instead. Must be set on **Production** scope in Vercel, and requires a redeploy to take effect — editing a Vercel env var does not hot-reload the running deployment.
 
 ### Optional config
 - `CACHE_TTL_DAYS=365` — default result cache lifetime (1 year; was 30 prior to v0.16)
