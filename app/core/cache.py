@@ -122,6 +122,69 @@ def set_cache(
         session.commit()
 
 
+def bulk_set_cache_invalid(
+    emails: list[str],
+    *,
+    strategy: str = "force_flip",
+    ttl_days: int | None = None,
+) -> int:
+    """Bulk-upsert emails into EmailCache as 'invalid', chunked 1000/round-trip.
+
+    For batch flows that flip many rows to invalid at once (retry-unknown
+    strike-outs, admin force-flip scripts) where calling set_cache() once
+    per email would mean one DB round-trip per email. Returns the number
+    of emails synced.
+    """
+    if not emails:
+        return 0
+    now = _now()
+    effective_ttl = ttl_days if (ttl_days is not None and ttl_days > 0) else settings.cache_ttl_days
+    expires = now + timedelta(days=effective_ttl)
+    provider_data = json.dumps({strategy: {"status": "invalid", "sub_status": None,
+                                            "raw": None, "confidence": None}})
+    chunk_size = 1000
+    synced = 0
+
+    for i in range(0, len(emails), chunk_size):
+        chunk = sorted({e.strip().lower() for e in emails[i : i + chunk_size] if e and e.strip()})
+        if not chunk:
+            continue
+        rows = [
+            {
+                "email": email,
+                "verdict": "invalid",
+                "provider_data": provider_data,
+                "providers_used": strategy,
+                "strategy": strategy,
+                "validated_at": now,
+                "expires_at": expires,
+            }
+            for email in chunk
+        ]
+        with Session(engine) as session:
+            if is_postgres():
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                stmt = pg_insert(EmailCache).values(rows)
+            else:
+                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                stmt = sqlite_insert(EmailCache).values(rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["email"],
+                set_={
+                    "verdict": stmt.excluded.verdict,
+                    "provider_data": stmt.excluded.provider_data,
+                    "providers_used": stmt.excluded.providers_used,
+                    "strategy": stmt.excluded.strategy,
+                    "validated_at": stmt.excluded.validated_at,
+                    "expires_at": stmt.excluded.expires_at,
+                },
+            )
+            session.execute(stmt)
+            session.commit()
+        synced += len(chunk)
+    return synced
+
+
 def parse_cached_providers(row: EmailCache) -> dict[str, ProviderResult]:
     """Deserialize stored provider JSON back into ProviderResult objects."""
     try:
