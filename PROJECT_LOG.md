@@ -1352,7 +1352,7 @@ _Last updated: 2026-07-01 — Session 26 — v0.18_
 
 ## Session 26 — 2026-07-01 — EmailCache reconciliation + stats accuracy audit (v0.18)
 
-**PRs:** #58 (perf: bulk-upsert cache sync + raise workflow timeout to 15m), #59 (fix: reconcile EmailCache drift + exclude expired rows from stats), #60 (fix: partition reconcile_email_cache by normalized email) — all merged to main.
+**PRs:** #58 (perf: bulk-upsert cache sync + raise workflow timeout to 15m), #59 (fix: reconcile EmailCache drift + exclude expired rows from stats), #60 (fix: partition reconcile_email_cache by normalized email), #61 (docs: log this session) — all merged to main.
 
 ### Root cause: dashboard Valid/Invalid cache breakdown didn't match all-time verdict distribution
 
@@ -1373,6 +1373,8 @@ The two fixes above only stop new drift — the backlog that accumulated in prod
 **Dry-run against production (before the real sync):** 84,267 resolved emails scanned, 13,692 missing/mismatched vs `EmailCache`.
 
 **Bug caught before the real (non-dry-run) sync ran — case-collision in the reconcile query.** `EmailResult.email` is stored as-is at write time (`process_job.py`, `bulk_worker.py` never normalize it), while `EmailCache` always normalizes to lowercase. The reconcile script's `ROW_NUMBER() OVER (PARTITION BY email ...)` was case-sensitive, so the same logical email appearing in two different cases across separate runs would produce two "latest resolved" rows that collapse to the same cache key in one batch — tripping Postgres's `ON CONFLICT DO UPDATE command cannot affect row a second time` on the real sync. Fixed by partitioning on `LOWER(TRIM(email))` instead (#60). Reproduced the failure mode with a same-email-two-cases fixture before and after the fix to confirm.
+
+**Real sync run against production (2026-07-01, post-fix):** 84,267 resolved emails scanned, **13,692 synced to `EmailCache`**, zero errors. The Valid/Invalid cache breakdown on `/cache` now matches the all-time verdict distribution on `/`.
 
 ### Known limitations found, not fixed (flagged, out of scope for this session)
 
