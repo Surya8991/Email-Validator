@@ -619,10 +619,13 @@ async def account_cleanup_page(request: Request, current_user: User = Depends(re
     """Big-CSV cleanup tool. The browser parses + filters the file; the
     server only answers small cache-verdict lookups. Keeps the 113k-row
     CRM export off Vercel's 4.5 MB request-body limit."""
+    target_ids = [
+        t.strip() for t in settings.google_sheets_target_ids.split(",") if t.strip()
+    ]
     return templates.TemplateResponse(request, "admin/account_cleanup.html", {
         **_admin_ctx("account-cleanup", current_user),
         "google_oauth_client_id": settings.google_oauth_client_id,
-        "google_sheets_target_id": settings.google_sheets_target_id,
+        "google_sheets_target_ids": target_ids,
     })
 
 

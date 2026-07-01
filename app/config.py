@@ -67,15 +67,19 @@ class Settings(BaseSettings):
     # (the authorized-origin allowlist is the actual security boundary).
     google_oauth_client_id: str = ""
 
-    # Target Google Sheets spreadsheet ID for the "Push to Google Sheets"
-    # button. When set, each push REPLACES the Verified / Invalid / All
-    # tabs in this spreadsheet (existing tabs are cleared + resized; other
-    # tabs in the spreadsheet are left untouched). When blank — or when
-    # the target is inaccessible (deleted, permissions revoked, wrong ID)
-    # — the push falls back to creating a fresh spreadsheet, same as the
-    # original behaviour. The authorizing Google account must have edit
-    # access to the target spreadsheet.
-    google_sheets_target_id: str = ""
+    # Target Google Sheets spreadsheet ID(s) for the "Push to Google Sheets"
+    # button, comma-separated. Each push REPLACES the "Verified" tab in
+    # target #1 (existing tab cleared + resized; other tabs left
+    # untouched), and if Verified needs to split across multiple
+    # spreadsheets to stay under Sheets' 10M cell cap, target #2, #3, ...
+    # are used for the overflow parts in order. When blank, the push
+    # creates fresh spreadsheets instead. When targets ARE configured,
+    # pushing more parts than there are targets — or a configured target
+    # being inaccessible (deleted, permissions revoked, wrong ID) — fails
+    # the push loudly rather than silently falling back to a spreadsheet
+    # outside this list. The authorizing Google account must have edit
+    # access to every target spreadsheet.
+    google_sheets_target_ids: str = ""
 
     # GitHub Actions bulk processing
     # Set GITHUB_PAT to a PAT with 'actions:write' scope to enable GHA bulk jobs
