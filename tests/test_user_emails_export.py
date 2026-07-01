@@ -101,6 +101,33 @@ def test_jobs_list_renders_per_user_stats_panel(auth_client, patch_db):
     assert "panel-user@example.com" in body
 
 
+def test_jobs_list_per_user_stats_shows_total_row(auth_client, patch_db):
+    """The per-user stats table's <tfoot> Total row sums exactly what
+    _per_user_verdict_stats() returns — computed from the DB directly
+    rather than hardcoded, since `patch_db` is session-scoped and other
+    tests' seeded users accumulate in it."""
+    import re
+
+    from app.routes.ui import _per_user_verdict_stats
+
+    _seed_user_with_results(patch_db, "total-row-user@example.com")
+    stats = _per_user_verdict_stats()
+    expected = [
+        sum(s[k] for s in stats)
+        for k in ("jobs", "processed", "valid", "invalid", "risky", "unknown")
+    ]
+
+    resp = auth_client.get("/jobs")
+    assert resp.status_code == 200
+    body = resp.text
+    tfoot_match = re.search(r"<tfoot.*?</tfoot>", body, re.S)
+    assert tfoot_match, "expected a <tfoot> Total row in the per-user stats table"
+    tfoot = tfoot_match.group(0)
+    assert "Total" in tfoot
+    numbers = [int(n) for n in re.findall(r">\s*(\d+)\s*<", tfoot)]
+    assert numbers[:6] == expected
+
+
 def test_cache_page_shows_verdict_dashboard(auth_client, patch_db):
     """Both admin /cache and user /cache_user include partials/cache_stats."""
     from datetime import datetime, timedelta
