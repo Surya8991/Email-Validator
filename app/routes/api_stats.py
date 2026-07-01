@@ -1,7 +1,7 @@
 import csv
 import io
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -51,7 +51,10 @@ def _domain_sql() -> str:
 def get_stats(current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        total_cache = session.exec(
+            select(func.count()).select_from(EmailCache)
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
+        ).one() or 0
 
         verdict_rows = session.execute(text(
             "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
@@ -118,11 +121,13 @@ def export_cache(
     verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_EXPORT_VERDICTS else ""
 
     # Column-projected query — never loads EmailCache.provider_data.
+    # Excludes expired rows so the export matches what the browser shows.
     stmt = (
         select(
             EmailCache.email, EmailCache.verdict, EmailCache.providers_used,
             EmailCache.strategy, EmailCache.validated_at, EmailCache.expires_at,
         )
+        .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
         .order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
     )
     if q:
@@ -185,8 +190,11 @@ def get_domain_reputation(domain: str, current_user: User = Depends(require_auth
     with Session(engine) as session:
         rows = session.execute(text("""
             SELECT verdict, COUNT(*) AS cnt FROM emailcache
-            WHERE email LIKE :pattern GROUP BY verdict
-        """), {"pattern": f"%@{domain.lower()}"}).fetchall()
+            WHERE email LIKE :pattern AND expires_at > :now GROUP BY verdict
+        """), {
+            "pattern": f"%@{domain.lower()}",
+            "now": datetime.now(UTC).replace(tzinfo=None),
+        }).fetchall()
 
     verdict_counts = {r[0]: r[1] for r in rows}
     total = sum(verdict_counts.values())
