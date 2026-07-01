@@ -3,7 +3,7 @@
 ## Overview
 FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
-Current version: **0.17** — Full-project security audit fixes: IDOR on /jobs, privilege inconsistency on deactivate, CSV formula injection (6 sinks), SMTP private-IP guard, pagination bug. See PROJECT_LOG.md Session 25.
+Current version: **0.18** — EmailCache reconciliation + stats accuracy audit: fixed `retry_unknowns.py` never syncing EmailCache on strike-outs (root cause of the Valid/Invalid cache breakdown mismatch), excluded expired EmailCache rows from 9 count/aggregate query sites that counted them as live, added a one-off `reconcile_email_cache.py` backfill (case-normalization bug caught before the real run — see Do NOT list). See PROJECT_LOG.md Session 26.
 
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)
@@ -53,7 +53,15 @@ scripts/
                           # Run via db_init.yml (GHA) on every push to main. NOT init_db.py (dead file).
   process_job.py          # GitHub Actions bulk processor — reads job.csv_data from DB
   local_triage_unknowns.py  # Re-validates unknown-verdict rows; called by local_triage.yml
-  mark_job_unknowns_invalid.py  # Marks lingering unknowns as invalid after N strikes; mark_unknowns_invalid.yml
+  retry_unknowns.py       # Twice-daily automated re-validation of unknown rows; strikes out to
+                          # 'invalid' after N failures AND bulk-syncs those strike-outs to
+                          # EmailCache via bulk_set_cache_invalid(); retry_unknowns.yml
+  mark_job_unknowns_invalid.py  # Manually marks lingering unknowns as invalid after N strikes,
+                          # syncs EmailCache via bulk_set_cache_invalid(); mark_unknowns_invalid.yml
+  reconcile_email_cache.py  # One-off backfill: finds emails whose latest resolved EmailResult
+                          # verdict disagrees with/is missing from EmailCache and bulk-upserts
+                          # the correct state. Safe to re-run (no-op once gap is closed).
+                          # workflow_dispatch-only, dry-run by default; reconcile_email_cache.yml
   bump_cache_ttl.py       # Extends cache TTL for rows matching criteria; bump_cache_ttl.yml
   flip_typo_domain_rows.py  # Reclassifies typo-domain emails; flip_typo_domains.yml
   export_cache.py         # Dumps EmailCache to CSV artifact (large-cache fallback); export_cache.yml
@@ -237,6 +245,9 @@ Templates: `GET /api/bulk/template.csv` and `GET /api/bulk/template.xlsx` (openp
 - **Gmail SMTP**: `SMTP_FROM` MUST equal `SMTP_USER` or Gmail rejects. Use an App Password (regular password is blocked).
 - **`session.commit()` expires ORM attributes**: if you load rows then commit something else in the same session, accessing the original rows' attributes raises `DetachedInstanceError`. Snapshot to plain tuples/dicts before commit (see audit-log export).
 - **Migration list**: adding a column to a model REQUIRES appending the `(table, column, DDL)` to `_PG_COLUMN_ADDS` in `app/db.py`. New tables are auto-created by `SQLModel.metadata.create_all()`; columns on existing tables are not.
+- **`EmailResult.email` is never normalized at write time** (`process_job.py`, `bulk_worker.py` store whatever case the CSV/input had), but `EmailCache.email` is always lowercased via `set_cache()`/`bulk_set_cache_invalid()`. Any query that groups or partitions across the two tables (e.g. reconciliation scripts) MUST use `LOWER(TRIM(email))`, not raw `email` — Session 26 found a case-collision bug in `reconcile_email_cache.py` that would have crashed the real (non-dry-run) sync on Postgres's `ON CONFLICT DO UPDATE command cannot affect row a second time`.
+- **`EmailCache` count/aggregate queries must filter `expires_at > now()`**. Expired rows aren't physically deleted until the manual "Purge Expired" admin action runs, so any COUNT/GROUP BY against `EmailCache` that skips this filter counts stale rows as live. Session 26 found and fixed 9 sites that missed it (dashboard, admin overview, `/cache`, its partial, CSV export, domain reputation, account-cleanup lookup) — only `get_cached()`/`get_cached_many()` filtered it correctly before the fix.
+- **Any code path that flips `EmailResult.verdict` to `invalid`/`valid` in bulk must also write `EmailCache`** — route it through `bulk_set_cache_invalid()` / `bulk_upsert_cache_rows()` in `app/core/cache.py`, never a bespoke UPDATE. Session 26's root-cause bug was `retry_unknowns.py`'s strike-out path updating `EmailResult` via raw SQL with no cache write at all, silently desyncing `/cache`'s Valid/Invalid breakdown from `/`'s all-time verdict distribution for months.
 
 ## Run Tests
 ```bash
