@@ -1343,4 +1343,48 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-07-01 — Session 24 — v0.16_
+_Last updated: 2026-07-01 — Session 25 — v0.17_
+
+---
+
+## Session 25 — 2026-07-01 — Full-Project Audit Fixes (v0.17)
+
+**PRs:** to be opened after this session.
+
+### Audit findings fixed
+
+**HIGH — IDOR on /jobs/{job_id} and /jobs list (`app/routes/ui.py`)**
+Any authenticated user could read any other user's job detail (emails, verdicts) and see all jobs on the /jobs list. Fixed:
+- `job_detail()`: after row fetch, added `is_admin = current_user.role in ("admin","superadmin")` + `if not is_admin and row[8] != current_user.id: return HTMLResponse("Job not found", 404)`.
+- `_list_jobs_lightweight()`: added `user_id: int | None = None` param; when set, filters `Job.user_id == user_id` on both `stmt` and `count_stmt`.
+- `jobs_list()` route: passes `user_id=current_user.id if not is_admin else None`.
+
+**HIGH — Admin can deactivate superadmin accounts (`app/routes/admin.py`)**
+`admin_deactivate_user` was decorated `require_admin` but the equivalent `admin_demote_user` requires `require_superadmin`. A plain admin could neutralise superadmins one-by-one. Fixed: changed decorator on `admin_deactivate_user` (and `admin_activate_user` for symmetry) to `require_superadmin`.
+
+**MEDIUM — CSV formula injection, 5 sinks (CWE-1236)**
+User-controlled strings (email, filename) written verbatim to CSV exports could be opened as formulas in Excel/LibreOffice. Added `csv_safe()` helper to `app/core/csv_io.py` that prefixes `=+-@\t\r` with `'`. Applied at all export sinks:
+- `app/routes/api_bulk.py` (r.email)
+- `app/routes/admin.py` (user emails.csv: em + fname; users.csv: email; usage CSV: email; audit log: actor_email + details)
+- `app/routes/api_stats.py` (email)
+- `scripts/export_cache.py` (email)
+
+**MEDIUM — Pagination bug: pages=0 when cache is empty (`app/routes/ui.py`)**
+Cache-table pagination at line 313 omitted the `max(1, ...)` floor present everywhere else. Fixed.
+
+**LOW — SMTP probe has no private-IP guard (`app/providers/local.py`)**
+MX-resolved host connected to directly without checking if IP is private/loopback. Added ipaddress + socket check before `smtp.connect()`.
+
+**DOC DRIFT fixes (`agents.md`, `README.md`)**
+- `agents.md`: `scripts/init_db.py` (dead) → `scripts/db_init.py`. Added 6 workflow-linked scripts: `local_triage_unknowns.py`, `mark_job_unknowns_invalid.py`, `bump_cache_ttl.py`, `flip_typo_domain_rows.py`, `export_cache.py`, `audit_unknowns.py`. Bumped version to 0.17.
+- `README.md`: bumped version to 0.16 (was 0.15).
+
+**TEST COVERAGE — structural gaps**
+Added `user_client` fixture to `tests/conftest.py` (role="user", not admin). Added tests:
+- IDOR: non-admin cannot see another user's job detail or jobs list
+- Auth: plain admin cannot activate/deactivate a superadmin account
+
+### Do NOT
+- Revert `admin_deactivate_user` / `admin_activate_user` back to `require_admin` — a plain admin should never be able to neutralise superadmin accounts.
+- Remove `csv_safe()` calls or skip them on "safe" fields — formula injection works on any cell value starting with `=+-@`, including role-prefixed values if any field ever contains one.
+- Bypass the `user_id` filter in `_list_jobs_lightweight` for non-admins — the comment in `jobs_list` about "ownership enforced at per-job detail/delete routes" is now stale; ownership is enforced at all three layers.

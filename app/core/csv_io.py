@@ -3,6 +3,14 @@ import io
 
 import aiofiles
 
+_FORMULA_CHARS = frozenset(("=", "+", "-", "@", "\t", "\r"))
+
+
+def csv_safe(v: str) -> str:
+    """Prefix formula-trigger characters to prevent CSV injection (CWE-1236)."""
+    s = str(v)
+    return ("'" + s) if s and s[0] in _FORMULA_CHARS else s
+
 
 async def parse_csv_emails(filepath: str, email_column: str = "") -> list[tuple[int, str, dict]]:
     """Returns list of (row_index, email, original_row_dict)."""

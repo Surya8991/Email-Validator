@@ -3,7 +3,7 @@
 ## Overview
 FastAPI web app that validates emails via multiple providers (Bouncify, ZeroBounce, NeverBounce, Hunter.io) plus a free local stack (syntax + MX + disposable + SMTP). Single-email, bulk-CSV, **bulk-XLSX**, and **paste-emails** modes. Deployed on Vercel (Hobby) with Neon PostgreSQL for persistent storage. Bulk jobs are offloaded to GitHub Actions to bypass Vercel's 10s function timeout. SMTP transactional email for invites, approvals, password reset, and team-join decisions.
 
-Current version: **0.16** — CSP allowlist fixes (jsdelivr + Google Identity/Sheets) and Push-to-Google-Sheets hardening: Verified-only, fixed ordered target-spreadsheet list, row-count integrity check. See PROJECT_LOG.md Session 23.
+Current version: **0.17** — Full-project security audit fixes: IDOR on /jobs, privilege inconsistency on deactivate, CSV formula injection (6 sinks), SMTP private-IP guard, pagination bug. See PROJECT_LOG.md Session 25.
 
 ## Stack
 - **Backend:** FastAPI + Python 3.12 + uvicorn (async)
@@ -49,8 +49,15 @@ app/
 api/
   index.py         # Vercel entry — sys.path guard + `from app.main import app` (ASGI auto-detected)
 scripts/
-  init_db.py       # One-time Neon table creation — run once per new DB
-  process_job.py   # GitHub Actions bulk processor — reads job.csv_data from DB
+  db_init.py              # Neon DB bootstrap: create_all + admin bootstrap + migrations + team backfill.
+                          # Run via db_init.yml (GHA) on every push to main. NOT init_db.py (dead file).
+  process_job.py          # GitHub Actions bulk processor — reads job.csv_data from DB
+  local_triage_unknowns.py  # Re-validates unknown-verdict rows; called by local_triage.yml
+  mark_job_unknowns_invalid.py  # Marks lingering unknowns as invalid after N strikes; mark_unknowns_invalid.yml
+  bump_cache_ttl.py       # Extends cache TTL for rows matching criteria; bump_cache_ttl.yml
+  flip_typo_domain_rows.py  # Reclassifies typo-domain emails; flip_typo_domains.yml
+  export_cache.py         # Dumps EmailCache to CSV artifact (large-cache fallback); export_cache.yml
+  audit_unknowns.py       # Reports unknown-verdict stats; audit_unknowns.yml
   pre_push_check.sh # 38-check safety checklist (auto-runs via .githooks/pre-push)
 .github/
   workflows/
@@ -70,7 +77,7 @@ mypy.ini           # mypy strict config
 pip install -r requirements.txt
 cp .env.example .env   # fill in BOUNCIFY_API_KEY at minimum
 # If using Neon (set DATABASE_URL in .env first):
-python scripts/init_db.py
+python scripts/db_init.py
 uvicorn app.main:app --reload
 ```
 Visit http://localhost:8000
@@ -78,7 +85,7 @@ Visit http://localhost:8000
 ## How to Init Neon DB
 ```bash
 # Add DATABASE_URL to .env first, then:
-python scripts/init_db.py
+python scripts/db_init.py
 ```
 Tables created: `job`, `emailresult`, `emailcache`, `apiusage`, `user`, `usersession`, `team`, `teammembership`, `userinvite`, `auditlog`, `systemsetting`
 

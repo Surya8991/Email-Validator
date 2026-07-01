@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 
 from app.auth import require_auth
 from app.config import settings
+from app.core.csv_io import csv_safe
 from app.db import engine
 from app.models import EmailResult, Job, User
 from app.schemas import BulkJobResponse, BulkStatusResponse
@@ -611,7 +612,7 @@ async def download_bulk(
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     for r in results:
-        row: dict = {"email": r.email, "verdict": r.verdict, "from_cache": False}
+        row: dict = {"email": csv_safe(r.email), "verdict": r.verdict, "from_cache": False}
         try:
             pd = json.loads(r.provider_data)
             for p, data in pd.items():

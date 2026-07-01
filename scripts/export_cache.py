@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlmodel import Session, select  # noqa: E402
 
+from app.core.csv_io import csv_safe  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.models import EmailCache  # noqa: E402
 
@@ -70,7 +71,7 @@ def main() -> int:
                 session.execute(stmt).all()
             ):
                 writer.writerow([
-                    email or "",
+                    csv_safe(email or ""),
                     vd or "",
                     providers_used or "",
                     strategy or "",
