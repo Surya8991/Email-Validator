@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 
 from app.auth import require_admin, require_superadmin
 from app.config import settings
+from app.core.csv_io import csv_safe
 from app.db import engine, is_postgres
 from app.models import (
     ApiUsage,
@@ -279,7 +280,7 @@ def admin_users_export(
         users = db.exec(query).all()
         rows_data = [
             (
-                u.email,
+                csv_safe(u.email),
                 u.role,
                 "active" if u.is_active else "inactive",
                 u.created_at.isoformat() if u.created_at else "",
@@ -344,7 +345,7 @@ async def admin_create_user(
 async def admin_activate_user(
     request: Request,
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_superadmin),
 ):
     notify_email = None
     was_inactive = False
@@ -370,7 +371,7 @@ async def admin_activate_user(
 @router.post("/users/{user_id}/deactivate")
 async def admin_deactivate_user(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_superadmin),
 ):
     if user_id == current_user.id:
         return RedirectResponse(url="/admin/users", status_code=302)
@@ -742,7 +743,7 @@ def admin_usage_export(current_user: User = Depends(require_admin)):
                 select(func.sum(Job.processed)).where(Job.user_id == u.id)
             ).one() or 0
             rows_data.append((
-                u.email, u.role,
+                csv_safe(u.email), u.role,
                 "active" if u.is_active else "inactive",
                 jobs_n, emails_n,
                 u.last_login.isoformat() if u.last_login else "",
@@ -812,8 +813,8 @@ def admin_user_emails_export(
     writer.writerow(["email", "verdict", "job_id", "job_filename", "created_at"])
     for em, v, jid, fname, created in rows:
         writer.writerow([
-            em or "", v or "", jid or "",
-            fname or "",
+            csv_safe(em or ""), v or "", jid or "",
+            csv_safe(fname or ""),
             created.isoformat() if created else "",
         ])
     safe_owner = (owner.email or f"user{user_id}").replace("@", "-at-").replace("/", "_")
@@ -1213,10 +1214,10 @@ async def admin_audit_log_export(
             (
                 log.created_at.isoformat() if log.created_at else "",
                 log.action,
-                log.actor_email,
+                csv_safe(log.actor_email or ""),
                 log.target_type,
                 log.target_id,
-                log.details,
+                csv_safe(log.details or ""),
             )
             for log in logs
         ]

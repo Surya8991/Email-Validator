@@ -1,5 +1,7 @@
 import asyncio
+import ipaddress
 import smtplib
+import socket
 
 import dns.resolver
 from email_validator import EmailNotValidError, validate_email
@@ -165,6 +167,12 @@ def _smtp_probe(email: str, domain: str) -> str:
     try:
         answers = dns.resolver.resolve(domain, "MX")
         mx_host = str(sorted(answers, key=lambda r: r.preference)[0].exchange).rstrip(".")
+        try:
+            resolved_ip = ipaddress.ip_address(socket.gethostbyname(mx_host))
+            if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local:
+                return "unknown"
+        except Exception:
+            return "unknown"
         with smtplib.SMTP(timeout=10) as smtp:
             smtp.connect(mx_host, 25)
             smtp.helo("validator.local")

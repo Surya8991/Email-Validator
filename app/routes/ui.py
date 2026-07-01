@@ -310,7 +310,7 @@ async def cache_table_partial(
         "page": page,
         "total": total,
         "limit": limit,
-        "pages": (total + limit - 1) // limit,
+        "pages": max(1, (total + limit - 1) // limit),
         "now": datetime.now(UTC).replace(tzinfo=None),
     })
 
@@ -458,6 +458,7 @@ def _list_jobs_lightweight(
     status: str | None = None,
     owner: str | None = None,
     page: int = 1,
+    user_id: int | None = None,
 ) -> tuple[list[dict], int]:
     """Same column-projection pattern as the dashboard. Keeps csv_data on Neon.
 
@@ -474,6 +475,9 @@ def _list_jobs_lightweight(
             select(func.count()).select_from(Job)
             .join(User, User.id == Job.user_id, isouter=True)  # type: ignore[arg-type]
         )
+        if user_id is not None:
+            stmt = stmt.where(Job.user_id == user_id)
+            count_stmt = count_stmt.where(Job.user_id == user_id)
         if status and status in _VALID_JOB_STATUSES:
             stmt = stmt.where(Job.status == status)
             count_stmt = count_stmt.where(Job.status == status)
@@ -514,10 +518,13 @@ async def jobs_list(
     is_admin = current_user.role in ("admin", "superadmin")
     owner_q = owner.strip() if is_admin else ""
     status_q = status.strip().lower() if status.strip().lower() in _VALID_JOB_STATUSES else ""
+    uid_filter = None if is_admin else current_user.id
     page = max(1, page)
     try:
         jobs, total = await asyncio.wait_for(
-            asyncio.to_thread(_list_jobs_lightweight, status_q or None, owner_q or None, page),
+            asyncio.to_thread(
+                _list_jobs_lightweight, status_q or None, owner_q or None, page, uid_filter,
+            ),
             timeout=6.0,
         )
     except (TimeoutError, Exception):  # noqa: BLE001
@@ -609,6 +616,9 @@ async def job_detail(request: Request, job_id: int, current_user: User = Depends
             results = []
             verdicts = {k: 0 for k in _VERDICT_KEYS}
     if not row:
+        return HTMLResponse("Job not found", status_code=404)
+    is_admin = current_user.role in ("admin", "superadmin")
+    if not is_admin and row[8] != current_user.id:
         return HTMLResponse("Job not found", status_code=404)
     job = {
         "id": row[0], "status": row[1], "total": row[2], "processed": row[3],

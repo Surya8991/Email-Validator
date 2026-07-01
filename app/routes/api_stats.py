@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from app.auth import require_auth
 from app.core.cache import purge_expired
+from app.core.csv_io import csv_safe
 from app.db import engine, is_postgres
 from app.models import EmailCache, EmailResult, User
 
@@ -139,7 +140,7 @@ def export_cache(
     ])
     for email, vd, providers_used, strategy, validated_at, expires_at in rows:
         writer.writerow([
-            email or "",
+            csv_safe(email or ""),
             vd or "",
             providers_used or "",
             strategy or "",

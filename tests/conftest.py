@@ -78,3 +78,35 @@ def auth_client(patch_db):
         resp = c.post("/login", data={"email": "test@example.com", "password": "testpass123"})
         assert resp.status_code in (200, 302), f"Login failed: {resp.status_code}"
         yield c
+
+
+@pytest.fixture
+def user_client(patch_db):
+    """Authenticated client with role='user' (non-admin)."""
+    import bcrypt
+    from sqlmodel import Session
+
+    from app.main import app
+    from app.models import User
+    from app.security import rate_limit as rl
+
+    rl._buckets.clear()
+
+    pw_hash = bcrypt.hashpw(b"userpass123", bcrypt.gensalt(rounds=4)).decode()
+    with Session(patch_db) as db:
+        existing = db.exec(
+            __import__("sqlmodel").select(User).where(User.email == "regularuser@example.com")
+        ).first()
+        if not existing:
+            db.add(User(
+                email="regularuser@example.com",
+                password_hash=pw_hash,
+                role="user",
+                is_active=True,
+            ))
+            db.commit()
+
+    with TestClient(app) as c:
+        resp = c.post("/login", data={"email": "regularuser@example.com", "password": "userpass123"})  # noqa: E501
+        assert resp.status_code in (200, 302), f"User login failed: {resp.status_code}"
+        yield c
