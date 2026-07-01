@@ -1,7 +1,7 @@
 # AI Email Validator — Master Project Log
 
 > **ACCOUNT-SWITCH PROOF. Read every section before touching any code.**
-> Last updated: 2026-06-30 (Session 22). Current VERSION: **0.15**
+> Last updated: 2026-07-01 (Session 26). Current VERSION: **0.18**
 
 > **Frequent main-branch pushes break Keep Warm.** Every push re-registers
 > the schedule and resets GitHub's 30-90 min activation delay. If
@@ -17,7 +17,7 @@
 3. Run app:         python -m uvicorn app.main:app --reload --port 8000
    → http://localhost:8000
 4. API docs:        http://localhost:8000/docs  (FastAPI auto-generated)
-5. Tests:           python -m pytest tests/ -q  → 36 passing
+5. Tests:           python -m pytest tests/ -q  → 60 passing
 6. Lint:            python -m ruff check app/ tests/  → 0 errors
 7. Health check:    GET http://localhost:8000/api/health
    → {"status":"ok","providers_enabled":["local","bouncify"]}
@@ -58,6 +58,9 @@
 - Call `create_db_tables()` from worker scripts (`process_job.py`, `retry_unknowns.py`, etc.) without `skip_migrations=True`. Session 22 fixed a prod deadlock where 3 concurrent workers all ran `_apply_lightweight_migrations()` and raced `ACCESS EXCLUSIVE` against siblings' `ACCESS SHARE` — Postgres killed job 101. Migrations run on every push via `db_init.yml`; workers should pass `skip_migrations=True`. `_apply_lightweight_migrations()` itself now wraps DDL in `pg_try_advisory_lock(7331)` as a belt-and-suspenders, but the worker scripts should still skip it.
 - Make `_count_queued_workflow_runs()` raise on GitHub API errors. Session 22 made it best-effort (returns 0 on any failure) so a transient 5xx never blocks bulk uploads. If you "improve" it by surfacing errors, every Vercel hiccup from GitHub becomes a 502 on `/api/bulk`.
 - Bump the workflow `concurrency:` group past 3 buckets without ALSO raising the app-side queue cap. Session 22 kept concurrency at 3 (Bouncify rate-limits past that produce 'unknown') and added `MAX_QUEUED_WORKFLOW_RUNS=10` as a separate dimension. Conflating the two breaks the contract — workers should run 3-at-a-time, the queue caps how many wait.
+- Partition or group `EmailCache`/`EmailResult` reconciliation queries by raw `email` — always `LOWER(TRIM(email))`. Session 26: `EmailResult.email` is never normalized at write time (`process_job.py`, `bulk_worker.py` store it as-is), only `EmailCache.email` is guaranteed lowercase. A raw-email `PARTITION BY`/`GROUP BY` lets two case-variants of one email both "win," producing duplicate cache-key writes in the same batch — Postgres's `ON CONFLICT DO UPDATE` errors with "cannot affect row a second time" when both land in one INSERT statement.
+- Add a new `EmailCache` count/aggregate query without an `expires_at > now()` filter. Session 26 found and fixed 9 existing sites (dashboard, admin overview, `/cache` browser + partial, CSV export, domain reputation, account-cleanup lookup) that counted expired rows as live, inflating every "Total Cached" metric in the UI. Only `get_cached()`/`get_cached_many()` filtered this correctly before the fix.
+- Add a new "flip verdict to invalid" code path without also calling `app/core/cache.py::bulk_set_cache_invalid()` (or `bulk_upsert_cache_rows()` for mixed verdicts). Session 26's root-cause bug was exactly this: `retry_unknowns.py`'s strike-out path flipped `EmailResult.verdict` via raw SQL but never touched `EmailCache`, leaving `/cache`'s Valid/Invalid breakdown permanently out of sync with the all-time verdict distribution on `/`.
 
 ---
 
@@ -1343,7 +1346,43 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-07-01 — Session 25 — v0.17_
+_Last updated: 2026-07-01 — Session 26 — v0.18_
+
+---
+
+## Session 26 — 2026-07-01 — EmailCache reconciliation + stats accuracy audit (v0.18)
+
+**PRs:** #58 (perf: bulk-upsert cache sync + raise workflow timeout to 15m), #59 (fix: reconcile EmailCache drift + exclude expired rows from stats), #60 (fix: partition reconcile_email_cache by normalized email) — all merged to main.
+
+### Root cause: dashboard Valid/Invalid cache breakdown didn't match all-time verdict distribution
+
+`scripts/retry_unknowns.py`'s `_mark_still_unknown` strike-out path (the twice-daily automated job that flips `unknown` → `invalid` after N failed retries) ran a raw SQL `UPDATE` against `EmailResult` and never touched `EmailCache`. Only the manual `mark_job_unknowns_invalid.py` script synced the cache (fixed in Session 25's #57 follow-up, #58). Since `retry_unknowns.py` is the live automated path, invalid verdicts accumulated an ever-growing backlog invisible to `EmailCache` — invalid cache coverage lagged all-time invalid count by ~2.6x vs valid's ~1.09x.
+
+Fixed: extracted the chunked `INSERT ... ON CONFLICT DO UPDATE` upsert into `app/core/cache.py::bulk_set_cache_invalid()` / `bulk_upsert_cache_rows()`, used by both `mark_job_unknowns_invalid.py` and the new call in `retry_unknowns.py::_process_batch` after each batch's strike-outs.
+
+### Bug — expired EmailCache rows counted as live everywhere except the validation-time lookup
+
+Every "Total Cached" / cache-verdict-breakdown query across the app (`/`, `/admin`, `/cache` browser + its `/partials/cache-table` partial, `/api/cache/export`, `get_domain_reputation`, `admin_cache_lookup` for Account Cleanup) counted `EmailCache` rows unconditionally. Only `get_cached()` / `get_cached_many()` (the actual validation-time lookup path) filtered `expires_at`. Rows past their 1-year TTL — not physically removed until the manual "Purge Expired" admin action runs — were counted as live everywhere else, inflating every cache metric shown in the UI.
+
+Fixed: added `WHERE expires_at > now()` to all 9 affected query sites in `app/routes/ui.py`, `api_stats.py`, `admin.py`. Regression test (`test_cache_stats_exclude_expired_rows` in `tests/test_user_emails_export.py`) proves `/cache`, `/partials/cache-table`, and `/api/cache/export` all agree on excluding expired rows.
+
+### Backfill for pre-fix drift
+
+The two fixes above only stop new drift — the backlog that accumulated in production before today needed a one-time repair. Added `scripts/reconcile_email_cache.py`: finds every email whose latest resolved (`valid`/`invalid`/`risky`) `EmailResult` row disagrees with — or is missing from — `EmailCache`, and bulk-upserts the correct state. Safe to re-run (no-op once the gap is closed). Runs via `.github/workflows/reconcile_email_cache.yml` (`workflow_dispatch`, `dry_run: true` by default) since it needs the production `DATABASE_URL` secret.
+
+**Dry-run against production (before the real sync):** 84,267 resolved emails scanned, 13,692 missing/mismatched vs `EmailCache`.
+
+**Bug caught before the real (non-dry-run) sync ran — case-collision in the reconcile query.** `EmailResult.email` is stored as-is at write time (`process_job.py`, `bulk_worker.py` never normalize it), while `EmailCache` always normalizes to lowercase. The reconcile script's `ROW_NUMBER() OVER (PARTITION BY email ...)` was case-sensitive, so the same logical email appearing in two different cases across separate runs would produce two "latest resolved" rows that collapse to the same cache key in one batch — tripping Postgres's `ON CONFLICT DO UPDATE command cannot affect row a second time` on the real sync. Fixed by partitioning on `LOWER(TRIM(email))` instead (#60). Reproduced the failure mode with a same-email-two-cases fixture before and after the fix to confirm.
+
+### Known limitations found, not fixed (flagged, out of scope for this session)
+
+- **"Cache Rate" (dashboard) is `EmailCache row count ÷ EmailResult row count`, not a true hit/miss rate.** `EmailResult` is an append-only log (grows unboundedly with retries/duplicates) while `EmailCache` is deduped, so this ratio trends toward 0% over time regardless of actual cache hit rate. UI already labels it "approx.", so not miscalculated — just an approximation. A true hit rate needs new instrumentation (a hit/miss counter at `get_cached()`/`get_cached_many()` call sites) — bigger feature, not attempted here.
+- **`/admin/usage` per-user breakdown only counts bulk-job results** (joins `EmailResult` through `Job.user_id`). Single "Quick Validate" results have `job_id=None` and no user attribution, so summing all per-user usage numbers will not equal the platform-wide "Validations run" total. Needs a schema change (`user_id` column on `EmailResult`) to fix properly — not attempted here.
+
+### Do NOT
+- Partition or group `EmailCache`/`EmailResult` reconciliation queries by raw `email` — always `LOWER(TRIM(email))`. `EmailResult.email` is never normalized at write time; only `EmailCache.email` is guaranteed lowercase.
+- Add a new `EmailCache` count/aggregate query without an `expires_at > now()` filter — Session 26 found and fixed 9 existing sites that missed this; a new one will silently reintroduce the same "Total Cached" inflation bug.
+- Assume `retry_unknowns.py` and `mark_job_unknowns_invalid.py` are the only two places that flip verdicts to `invalid` without checking whether the cache write path was updated too — always route new invalid-flip logic through `app/core/cache.py::bulk_set_cache_invalid()` / `bulk_upsert_cache_rows()`, not a bespoke upsert.
 
 ---
 
