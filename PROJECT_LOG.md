@@ -78,6 +78,14 @@
 
 ---
 
+## Session 24 — 2026-07-01 — env var naming gotcha (GOOGLE_SHEETS_TARGET_IDS)
+
+**Post-#51 deploy follow-up.** Two redeploys after #51 merged, the Push to Google Sheets button still showed "creates a new spreadsheet in your Drive" instead of targeting the configured mastersheets. Root cause: the Vercel env var was saved as `GOOGLE_SHEET_TARGET_IDS` (singular "SHEET") — the code reads `GOOGLE_SHEETS_TARGET_IDS` (plural). Since pydantic-settings' `env_ignore_empty` only ignores *empty* values, a misnamed var isn't caught at all — it's simply never seen, and the field silently keeps its `""` default with no error anywhere. Fixed by renaming the var in Vercel to match exactly, then redeploying.
+
+**Takeaway for future config additions:** when introducing a new env-var-backed setting, the exact expected name (matching the pydantic field name, case-insensitive) should be stated unambiguously wherever it's documented, since Vercel's UI won't warn about typos or near-matches and the app has no startup check that a documented env var is actually spelled right in the environment.
+
+---
+
 ## Session 22 — 2026-06-30 — v0.15 stats & queue overhaul + deadlock fix
 
 Six PRs landed in one session, ending with a hot-fix for a production crash uncovered by the new queue cap.
@@ -1335,4 +1343,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-07-01 — Session 23 — v0.16_
+_Last updated: 2026-07-01 — Session 24 — v0.16_
