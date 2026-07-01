@@ -82,6 +82,34 @@
         </tr>
         {% endfor %}
       </tbody>
+      <tfoot class="bg-gray-50 dark:bg-gray-800/50 border-t-2 border-gray-200 dark:border-gray-700">
+        {% set tj = user_stats | sum(attribute='jobs') %}
+        {% set tp = user_stats | sum(attribute='processed') %}
+        {% set tv = user_stats | sum(attribute='valid') %}
+        {% set ti = user_stats | sum(attribute='invalid') %}
+        {% set tr = user_stats | sum(attribute='risky') %}
+        {% set tu = user_stats | sum(attribute='unknown') %}
+        {% set tt = tv + ti + tr + tu %}
+        <tr>
+          <td class="px-4 py-2.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Total</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-gray-700 dark:text-gray-300">{{ tj }}</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-gray-700 dark:text-gray-300">{{ tp }}</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-green-700 dark:text-green-300">{{ tv }}</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-red-600 dark:text-red-300">{{ ti }}</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-300">{{ tr }}</td>
+          <td class="px-4 py-2.5 text-right font-mono font-semibold text-gray-500 dark:text-gray-400">{{ tu }}</td>
+          <td class="px-4 py-2.5">
+            {% if tt > 0 %}
+            <div class="flex h-1.5 w-32 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              {% if tv %}<div class="bg-green-500" style="width: {{ (tv / tt * 100) }}%"></div>{% endif %}
+              {% if ti %}<div class="bg-red-500" style="width: {{ (ti / tt * 100) }}%"></div>{% endif %}
+              {% if tr %}<div class="bg-amber-400" style="width: {{ (tr / tt * 100) }}%"></div>{% endif %}
+              {% if tu %}<div class="bg-gray-400" style="width: {{ (tu / tt * 100) }}%"></div>{% endif %}
+            </div>
+            {% else %}<span class="text-gray-300">—</span>{% endif %}
+          </td>
+        </tr>
+      </tfoot>
     </table>
   </details>
   {% endif %}
