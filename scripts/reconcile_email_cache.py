@@ -32,17 +32,27 @@ from app.db import engine  # noqa: E402
 # ROW_NUMBER() OVER (PARTITION BY ...) works identically on Postgres and
 # SQLite 3.25+ (the version bundled with Python 3.11+), so no dialect
 # branch is needed here — unlike the ON CONFLICT upsert syntax.
+#
+# Partition by LOWER(TRIM(email)), not raw email: EmailResult.email is
+# stored as-is from whatever the CSV/input provided (no normalization at
+# write time — see process_job.py / bulk_worker.py), so the same logical
+# email can appear in different cases across runs. EmailCache always
+# normalizes to lowercase, so partitioning on raw email would let two
+# case-variants of one email each "win" their own row, producing two
+# rows that collapse to the same cache key in one batch — that trips
+# Postgres's "ON CONFLICT DO UPDATE command cannot affect row a second
+# time" when both land in the same INSERT statement.
 _LATEST_RESOLVED_SQL = """
     SELECT email, verdict, provider_data FROM (
         SELECT email, verdict, provider_data,
                ROW_NUMBER() OVER (
-                   PARTITION BY email ORDER BY created_at DESC, id DESC
+                   PARTITION BY LOWER(TRIM(email)) ORDER BY created_at DESC, id DESC
                ) AS rn
         FROM emailresult
         WHERE verdict IN ('valid', 'invalid', 'risky')
     ) t
     WHERE rn = 1
-    ORDER BY email
+    ORDER BY LOWER(TRIM(email))
     LIMIT :limit OFFSET :offset
 """
 
