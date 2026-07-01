@@ -61,6 +61,23 @@
 
 ---
 
+## Session 23 — 2026-07-01 — v0.16 CSP fixes + Sheets push hardening
+
+**CSP allowlist gaps (#49, #50)**
+- The CSP added in Session 22 (#46) only allowlisted `unpkg.com` + `cdn.tailwindcss.com` for `script-src`. It missed `cdn.jsdelivr.net` — silently breaking CSV upload on `/admin/account-cleanup` (PapaParse) and charts on `/analytics` + `/admin/stats` (Chart.js), and `accounts.google.com` — breaking the "Push to Google Sheets" button's GIS SDK load, plus `connect-src`/`frame-src` for the Sheets API writes and OAuth iframe.
+- Fixed by adding the missing origins to `script-src`, `connect-src`, and `frame-src` in `SecurityHeadersMiddleware`.
+
+**Push to Google Sheets: Verified-only + fixed target list (#51)**
+- Now writes **only** the Verified tab — Invalid/dropped rows are no longer pushed at all.
+- `google_sheets_target_id` (single) replaced with `google_sheets_target_ids` (comma-separated). Verified part 1 goes to target #1's Verified tab, part 2 to target #2, etc. — strictly in that order, never a spreadsheet outside the list.
+- Root cause of a "12k of 47k rows landed" report: the old code silently fell back to creating a spreadsheet outside the configured target whenever a write hit a snag. Now: needing more parts than configured targets, or any configured target being inaccessible, fails the push loudly and names which target and why — instead of a silent partial write.
+- Added a post-write row-count integrity check across all parts.
+
+**Required action after deploy**
+- Set `GOOGLE_SHEETS_TARGET_IDS` in Vercel env (Production scope) to the target spreadsheet IDs, comma-separated, in order — then redeploy. Adding/editing a Vercel env var does not hot-reload the running deployment.
+
+---
+
 ## Session 22 — 2026-06-30 — v0.15 stats & queue overhaul + deadlock fix
 
 Six PRs landed in one session, ending with a hot-fix for a production crash uncovered by the new queue cap.
@@ -1318,4 +1335,4 @@ Zapier / n8n → Multi-user auth → Scheduled re-validation → SDK → AI tria
 
 ---
 
-_Last updated: 2026-06-29 — Session 21 — v0.14_
+_Last updated: 2026-07-01 — Session 23 — v0.16_
