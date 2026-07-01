@@ -1,0 +1,49 @@
+name: Reconcile Email Cache
+
+# One-off backfill: syncs EmailCache from EmailResult's latest resolved
+# verdicts, repairing the backlog left by the retry_unknowns.py strike-out
+# bug (fixed in scripts/retry_unknowns.py — see _mark_still_unknown). Safe
+# to re-run; only touches emails where the two tables actually disagree.
+#
+# Trigger: gh workflow run reconcile_email_cache.yml -f dry_run=true
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print counts without writing to EmailCache"
+        required: false
+        type: boolean
+        default: true
+      batch_size:
+        description: "Resolved EmailResult rows scanned per round-trip"
+        required: false
+        type: string
+        default: "2000"
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reconcile
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          BATCH_SIZE: ${{ inputs.batch_size || '2000' }}
+        run: |
+          ARGS=(--batch-size "$BATCH_SIZE")
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          python scripts/reconcile_email_cache.py "${ARGS[@]}"

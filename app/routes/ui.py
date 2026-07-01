@@ -120,7 +120,10 @@ def _dashboard_aggregates() -> dict:
     parallelize multiple stat lookups when needed."""
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        total_cache = session.exec(
+            select(func.count()).select_from(EmailCache)
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
+        ).one() or 0
         verdict_rows = session.execute(text(
             "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"
         )).fetchall()
@@ -237,11 +240,17 @@ def _cache_verdict_stats() -> dict:
     Note: 'unknown' verdicts are intentionally NEVER cached (see
     validator.py:34) so that count is always 0; we still surface the slot
     for visual completeness.
+
+    Filters out expired rows — without this, entries past their TTL (only
+    physically removed by the manual "Purge Expired" admin action) get
+    counted as live cache, inflating every card on this page.
     """
     out = {"total": 0, "valid": 0, "invalid": 0, "risky": 0, "unknown": 0}
     with Session(engine) as session:
         rows = session.execute(
-            select(EmailCache.verdict, func.count()).group_by(EmailCache.verdict)
+            select(EmailCache.verdict, func.count())
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
+            .group_by(EmailCache.verdict)
         ).all()
     for v, cnt in rows:
         if v in out:
@@ -288,15 +297,22 @@ async def cache_table_partial(
     limit = 25
     offset = (page - 1) * limit
     verdict_q = verdict.strip().lower() if verdict.strip().lower() in _VALID_CACHE_VERDICTS else ""
+    now = datetime.now(UTC).replace(tzinfo=None)
     with Session(engine) as session:
-        base_q = select(EmailCache).order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+        # Expired rows aren't physically deleted until "Purge Expired" runs —
+        # exclude them so the browser only ever shows live cache entries.
+        base_q = (
+            select(EmailCache)
+            .where(EmailCache.expires_at > now)
+            .order_by(EmailCache.validated_at.desc())  # type: ignore[arg-type]
+        )
         if q:
             base_q = base_q.where(EmailCache.email.contains(q))
         if verdict_q:
             base_q = base_q.where(EmailCache.verdict == verdict_q)
         rows = session.exec(base_q.offset(offset).limit(limit)).all()
 
-        count_q = select(func.count()).select_from(EmailCache)
+        count_q = select(func.count()).select_from(EmailCache).where(EmailCache.expires_at > now)
         if q:
             count_q = count_q.where(EmailCache.email.contains(q))
         if verdict_q:
@@ -311,7 +327,7 @@ async def cache_table_partial(
         "total": total,
         "limit": limit,
         "pages": max(1, (total + limit - 1) // limit),
-        "now": datetime.now(UTC).replace(tzinfo=None),
+        "now": now,
     })
 
 
@@ -351,7 +367,10 @@ async def my_recent_validations_partial(
 async def analytics_page(request: Request, current_user: User = Depends(require_auth)):
     with Session(engine) as session:
         total_results = session.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = session.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        total_cache = session.exec(
+            select(func.count()).select_from(EmailCache)
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
+        ).one() or 0
 
         verdict_rows = session.execute(text(
             "SELECT verdict, COUNT(*) FROM emailresult GROUP BY verdict"

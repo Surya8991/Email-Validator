@@ -120,6 +120,40 @@ def test_validate_with_cache_returns_hit_on_second_call():
     asyncio.run(run())
 
 
+def test_bulk_set_cache_invalid():
+    from app.core.cache import bulk_set_cache_invalid, get_cached
+
+    emails = ["bulk1@example.com", "Bulk2@Example.com", "bulk3@example.com"]
+    synced = bulk_set_cache_invalid(emails, strategy="retry_unknowns_strikeout")
+
+    assert synced == 3
+    for email in emails:
+        row = get_cached(email)
+        assert row is not None
+        assert row.verdict == "invalid"
+        assert row.strategy == "retry_unknowns_strikeout"
+
+
+def test_bulk_set_cache_invalid_upserts_existing():
+    from app.core.cache import bulk_set_cache_invalid, get_cached, set_cache
+
+    email = "bulk-upsert@example.com"
+    set_cache(email, "valid", {"local": _make_result("valid")}, "bouncify_only")
+
+    synced = bulk_set_cache_invalid([email])
+
+    assert synced == 1
+    row = get_cached(email)
+    assert row is not None
+    assert row.verdict == "invalid"  # overwritten by the bulk flip
+
+
+def test_bulk_set_cache_invalid_empty_list_noop():
+    from app.core.cache import bulk_set_cache_invalid
+
+    assert bulk_set_cache_invalid([]) == 0
+
+
 def test_purge_expired():
     from app.core.cache import purge_expired
     from app.db import engine

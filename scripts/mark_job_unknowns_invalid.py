@@ -22,9 +22,7 @@ Examples:
     python scripts/mark_job_unknowns_invalid.py --min-retry-count 2 --dry-run
 """
 import argparse
-import json
 import sys
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,9 +31,9 @@ from sqlalchemy import func  # noqa: E402
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, select  # noqa: E402
 
-from app.config import settings  # noqa: E402
-from app.db import engine, is_postgres  # noqa: E402
-from app.models import EmailCache, EmailResult  # noqa: E402
+from app.core.cache import bulk_set_cache_invalid  # noqa: E402
+from app.db import engine  # noqa: E402
+from app.models import EmailResult  # noqa: E402
 
 
 def main() -> int:
@@ -81,75 +79,9 @@ def main() -> int:
 
     # Sync EmailCache so the Account Cleanup cache-breakdown shows these as
     # "invalid (DROP)" rather than "not in cache (KEEP)".
-    _sync_cache(emails_to_flip)
-    return 0
-
-
-def _sync_cache(emails: list[str]) -> None:
-    """Bulk-upsert all flipped emails into EmailCache as 'invalid'.
-
-    Uses a single INSERT ... ON CONFLICT DO UPDATE per 1000-row chunk so
-    the whole sync takes one round-trip per chunk instead of one per email.
-    """
-    if not emails:
-        return
-    now = datetime.now(UTC).replace(tzinfo=None)
-    expires = now + timedelta(days=settings.cache_ttl_days)
-    provider_data = json.dumps({"force_flip": {"status": "invalid", "sub_status": None,
-                                                "raw": None, "confidence": None}})
-    chunk_size = 1000
-    synced = 0
-
-    for i in range(0, len(emails), chunk_size):
-        chunk = [e.strip().lower() for e in emails[i : i + chunk_size] if e and e.strip()]
-        if not chunk:
-            continue
-        rows = [
-            {
-                "email": email,
-                "verdict": "invalid",
-                "provider_data": provider_data,
-                "providers_used": "force_flip",
-                "strategy": "force_flip",
-                "validated_at": now,
-                "expires_at": expires,
-            }
-            for email in chunk
-        ]
-        with Session(engine) as db:
-            if is_postgres():
-                from sqlalchemy.dialects.postgresql import insert as pg_insert
-                stmt = pg_insert(EmailCache).values(rows)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["email"],
-                    set_={
-                        "verdict": stmt.excluded.verdict,
-                        "provider_data": stmt.excluded.provider_data,
-                        "providers_used": stmt.excluded.providers_used,
-                        "strategy": stmt.excluded.strategy,
-                        "validated_at": stmt.excluded.validated_at,
-                        "expires_at": stmt.excluded.expires_at,
-                    },
-                )
-            else:
-                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-                stmt = sqlite_insert(EmailCache).values(rows)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["email"],
-                    set_={
-                        "verdict": stmt.excluded.verdict,
-                        "provider_data": stmt.excluded.provider_data,
-                        "providers_used": stmt.excluded.providers_used,
-                        "strategy": stmt.excluded.strategy,
-                        "validated_at": stmt.excluded.validated_at,
-                        "expires_at": stmt.excluded.expires_at,
-                    },
-                )
-            db.execute(stmt)
-            db.commit()
-        synced += len(chunk)
-        print(f"  cache sync {synced}/{len(emails)}")
+    synced = bulk_set_cache_invalid(emails_to_flip)
     print(f"synced {synced} emails to EmailCache as invalid")
+    return 0
 
 
 if __name__ == "__main__":
