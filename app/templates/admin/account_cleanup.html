@@ -231,6 +231,13 @@
     verifiedOnly: [],
     pendingEmails: [],
     lookupInFlight: false,
+    // Resume support for the Sheets push: if a run fails partway
+    // (e.g. a transient "Failed to fetch"), this records how far it
+    // got so a retry continues from there instead of re-checking and
+    // re-writing already-succeeded target spreadsheets from scratch.
+    // Invalidated whenever the underlying Verified data changes shape
+    // (see `signature` in _pushToSheets).
+    sheetsProgress: null,
   };
 
   // Vercel Hobby has a 10s function ceiling. The /admin/cache-lookup
@@ -252,6 +259,7 @@
     state.dropped = [];
     state.verifiedOnly = [];
     state.pendingEmails = [];
+    state.sheetsProgress = null;
     hide("step-breakdown");
     hide("breakdown-grid");
     hide("step-exports");
@@ -918,14 +926,28 @@
         );
       }
 
+      // Resume support: if a previous run got partway through this
+      // exact dataset before failing (e.g. a transient "Failed to
+      // fetch"), pick up from the first not-yet-written part instead
+      // of re-checking/re-writing targets that already succeeded.
+      // The signature is invalidated by anything that would change
+      // chunk boundaries or destinations.
+      const signature = `${verifiedRows.length}:${partCount}:${verifiedColCount}:${GOOGLE_SHEETS_TARGET_IDS.join(",")}`;
+      const resumable = state.sheetsProgress && state.sheetsProgress.signature === signature;
+
       // Write each chunk to its destination in order: target #1 gets
       // part 1, target #2 gets part 2, etc. (or a freshly-created
       // spreadsheet per part when no targets are configured).
-      const spreadsheetResults = [];
-      let totalWritten = 0;
-      let primaryUrl = null;
+      const spreadsheetResults = resumable ? [...state.sheetsProgress.results] : [];
+      let totalWritten = resumable ? state.sheetsProgress.totalWritten : 0;
+      let primaryUrl = resumable ? state.sheetsProgress.primaryUrl : null;
+      const startIndex = resumable ? state.sheetsProgress.upTo : 0;
+      if (startIndex > 0) {
+        SHEETS_STATUS.textContent =
+          `Resuming — parts 1-${startIndex}/${partCount} already landed, continuing from part ${startIndex + 1}…`;
+      }
 
-      for (let i = 0; i < partCount; i++) {
+      for (let i = startIndex; i < partCount; i++) {
         const chunk = chunks[i];
         const partLabel = partCount > 1 ? `pt ${i + 1}/${partCount}` : null;
         const spec = { title: "Verified", rowCount: chunk.length + ROW_BUFFER, columnCount: verifiedColCount };
@@ -992,6 +1014,14 @@
           label: partLabel ? `Verified ${partLabel}` : "Verified",
           reused,
         });
+
+        // Persist progress after every successful part so a failure on
+        // the NEXT part (network blip, target unreachable, etc.) can
+        // resume from here instead of re-doing this one.
+        state.sheetsProgress = {
+          signature, upTo: i + 1, totalWritten,
+          primaryUrl, results: [...spreadsheetResults],
+        };
       }
 
       // Integrity check: every verified row must have actually landed
@@ -1004,6 +1034,11 @@
           `wrote ${totalWritten}. Do not trust the destination — re-run.`,
         );
       }
+
+      // Full success — clear resume state so the next push (presumably
+      // a fresh file/run) starts clean rather than matching a stale
+      // signature by coincidence.
+      state.sheetsProgress = null;
 
       // Render links + final status. Open the first destination so
       // the user lands on the spreadsheet they're most likely monitoring.
@@ -1018,7 +1053,10 @@
       window.open(primaryUrl, "_blank", "noopener");
     } catch (e) {
       console.error(e);
-      SHEETS_STATUS.textContent = "Failed: " + (e && e.message ? e.message : e);
+      const resumeHint = state.sheetsProgress
+        ? ` Parts 1-${state.sheetsProgress.upTo} already landed — click the button again to resume from part ${state.sheetsProgress.upTo + 1}.`
+        : "";
+      SHEETS_STATUS.textContent = "Failed: " + (e && e.message ? e.message : e) + resumeHint;
     } finally {
       SHEETS_BTN.disabled = false;
     }
