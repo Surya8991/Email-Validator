@@ -1,7 +1,10 @@
-"""Flip 'unknown' EmailResult rows to 'invalid'.
+"""Flip 'unknown' EmailResult rows to 'invalid' and sync EmailCache.
 
 Use to skip retry strikes — the rows get force-marked as invalid so they
 leave the retry pool and the verdict distribution becomes fully resolved.
+Also upserts each flipped email into EmailCache so the Account Cleanup
+cache-breakdown reflects the true state (without this, flipped rows stay
+as "not in cache (KEEP)" instead of "invalid (DROP)").
 
 Scope filters (combine as needed):
 - --job-id N             restrict to one job
@@ -41,9 +44,6 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    # Build the WHERE via SQLAlchemy column expressions rather than
-    # text(f"...{where}") interpolation — keeps CodeQL's py/sql-injection
-    # taint analyzer happy and isn't tied to the table being literal SQL.
     def _scope_filter(stmt):
         stmt = stmt.where(EmailResult.verdict == "unknown")
         if args.job_id is not None:
@@ -64,12 +64,43 @@ def main() -> int:
         if args.dry_run or n == 0:
             print("[dry-run]" if args.dry_run else "nothing to do")
             return 0
+
+        # Fetch emails before flipping so we can sync the cache.
+        emails_to_flip = db.execute(
+            _scope_filter(select(EmailResult.email))
+        ).scalars().all()
+
         rows = db.execute(
             _scope_filter(sa_update(EmailResult)).values(verdict="invalid")
         ).rowcount or 0
         db.commit()
         print(f"flipped {rows} rows from unknown -> invalid")
+
+    # Sync EmailCache so the Account Cleanup cache-breakdown shows these as
+    # "invalid (DROP)" rather than "not in cache (KEEP)".
+    _sync_cache(emails_to_flip)
     return 0
+
+
+def _sync_cache(emails: list[str]) -> None:
+    if not emails:
+        return
+    from app.core.cache import set_cache
+    from app.schemas import ProviderResult
+    batch = 500
+    synced = 0
+    for i in range(0, len(emails), batch):
+        chunk = emails[i : i + batch]
+        for email in chunk:
+            set_cache(
+                email=email,
+                verdict="invalid",
+                providers={"force_flip": ProviderResult(status="invalid")},
+                strategy="force_flip",
+            )
+        synced += len(chunk)
+        print(f"  cache sync {synced}/{len(emails)}")
+    print(f"synced {synced} emails to EmailCache as invalid")
 
 
 if __name__ == "__main__":
