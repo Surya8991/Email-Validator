@@ -42,7 +42,7 @@ env:
 jobs:
   flip:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Check auto-drain expiry
         id: drain
