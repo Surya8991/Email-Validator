@@ -154,3 +154,42 @@ def test_cache_page_shows_verdict_dashboard(auth_client, patch_db):
     assert "Total cached" in body
     # The two seeded rows should appear in their verdict slots.
     assert ">Valid<" in body or "Valid" in body
+
+
+def test_cache_stats_exclude_expired_rows(auth_client, patch_db):
+    """Expired EmailCache rows (past TTL, not yet purged) must not count as
+    live cache — /cache, /partials/cache-table, and /api/cache/export should
+    all agree on the same live count."""
+    from datetime import datetime, timedelta
+
+    from app.models import EmailCache
+
+    with Session(patch_db) as db:
+        now = datetime.utcnow()
+        db.add(EmailCache(
+            email="live@example.com", verdict="valid",
+            provider_data="{}", providers_used="bouncify",
+            strategy="bouncify_only", validated_at=now - timedelta(days=400),
+            expires_at=now + timedelta(days=30),
+        ))
+        db.add(EmailCache(
+            email="expired@example.com", verdict="invalid",
+            provider_data="{}", providers_used="bouncify",
+            strategy="bouncify_only", validated_at=now - timedelta(days=400),
+            expires_at=now - timedelta(days=1),
+        ))
+        db.commit()
+
+    resp = auth_client.get("/cache")
+    assert resp.status_code == 200
+    assert "expired@example.com" not in resp.text
+
+    table_resp = auth_client.get("/partials/cache-table")
+    assert table_resp.status_code == 200
+    assert "expired@example.com" not in table_resp.text
+    assert "live@example.com" in table_resp.text
+
+    export_resp = auth_client.get("/api/cache/export")
+    assert export_resp.status_code == 200
+    assert "expired@example.com" not in export_resp.text
+    assert "live@example.com" in export_resp.text

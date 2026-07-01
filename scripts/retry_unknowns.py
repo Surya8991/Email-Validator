@@ -37,7 +37,12 @@ from sqlalchemy import text  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
 from app.config import settings  # noqa: E402
-from app.core.cache import get_cached, parse_cached_providers, set_cache  # noqa: E402
+from app.core.cache import (  # noqa: E402
+    bulk_set_cache_invalid,
+    get_cached,
+    parse_cached_providers,
+    set_cache,
+)
 from app.core.validator import validate  # noqa: E402
 from app.db import create_db_tables, engine  # noqa: E402
 from app.providers import registry  # noqa: E402
@@ -158,6 +163,9 @@ def _mark_still_unknown(
     in the same UPDATE — persistent unknowns are dead-MX / parked
     domains in practice, treating them as invalid stops the bleeding.
 
+    Callers must bulk-sync struck-out emails into EmailCache themselves
+    (via bulk_set_cache_invalid) — this only touches EmailResult rows.
+
     Returns (rows_incremented, rows_struck_out).
     """
     clauses = ["email = :email", "verdict = 'unknown'"]
@@ -215,6 +223,7 @@ async def _process_batch(
     done = 0
     started = time.monotonic()
     next_progress_at = PROGRESS_EVERY
+    struck_out_emails: list[str] = []
     for i in range(0, len(emails), CHUNK_SIZE):
         slice_ = emails[i : i + CHUNK_SIZE]
         tasks = [_validate_one(em, providers, strategy) for em in slice_]
@@ -232,6 +241,8 @@ async def _process_batch(
                     )
                     stats["still_unknown"] += 1
                     stats["struck_out"] += struck
+                    if struck:
+                        struck_out_emails.append(em)
                     continue
                 rows = _update_rows(
                     session, em, verdict, json.dumps(pdata), job_id=job_id,
@@ -250,6 +261,12 @@ async def _process_batch(
                 flush=True,
             )
             next_progress_at = done + PROGRESS_EVERY
+    if struck_out_emails:
+        # Without this, strike-outs flip EmailResult to 'invalid' but never
+        # touch EmailCache — the cache-browser undercounts invalid forever
+        # even though the all-time verdict distribution shows it correctly.
+        synced = bulk_set_cache_invalid(struck_out_emails, strategy="retry_unknowns_strikeout")
+        print(f"  cache-synced {synced} struck-out emails as invalid", flush=True)
     return stats
 
 

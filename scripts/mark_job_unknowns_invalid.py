@@ -31,6 +31,7 @@ from sqlalchemy import func  # noqa: E402
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, select  # noqa: E402
 
+from app.core.cache import bulk_set_cache_invalid  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.models import EmailResult  # noqa: E402
 
@@ -78,29 +79,9 @@ def main() -> int:
 
     # Sync EmailCache so the Account Cleanup cache-breakdown shows these as
     # "invalid (DROP)" rather than "not in cache (KEEP)".
-    _sync_cache(emails_to_flip)
-    return 0
-
-
-def _sync_cache(emails: list[str]) -> None:
-    if not emails:
-        return
-    from app.core.cache import set_cache
-    from app.schemas import ProviderResult
-    batch = 500
-    synced = 0
-    for i in range(0, len(emails), batch):
-        chunk = emails[i : i + batch]
-        for email in chunk:
-            set_cache(
-                email=email,
-                verdict="invalid",
-                providers={"force_flip": ProviderResult(status="invalid")},
-                strategy="force_flip",
-            )
-        synced += len(chunk)
-        print(f"  cache sync {synced}/{len(emails)}")
+    synced = bulk_set_cache_invalid(emails_to_flip)
     print(f"synced {synced} emails to EmailCache as invalid")
+    return 0
 
 
 if __name__ == "__main__":

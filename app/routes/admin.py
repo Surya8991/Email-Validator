@@ -6,7 +6,7 @@ import json
 import secrets
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
 import bcrypt
@@ -60,7 +60,10 @@ def _admin_overview_aggregates() -> dict:
     """
     with Session(engine) as db:
         total_results = db.exec(select(func.count()).select_from(EmailResult)).one() or 0
-        total_cache = db.exec(select(func.count()).select_from(EmailCache)).one() or 0
+        total_cache = db.exec(
+            select(func.count()).select_from(EmailCache)
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
+        ).one() or 0
         total_users = db.exec(select(func.count()).select_from(User)).one() or 0
         pending_users = db.exec(
             select(func.count()).select_from(User).where(User.is_active == False)  # noqa: E712
@@ -665,6 +668,7 @@ async def admin_cache_lookup(
         rows = db.exec(
             select(EmailCache.email, EmailCache.verdict, EmailCache.validated_at)
             .where(func.lower(EmailCache.email).in_(keys))  # type: ignore[attr-defined]
+            .where(EmailCache.expires_at > datetime.now(UTC).replace(tzinfo=None))
         ).all()
 
     verdicts = {
