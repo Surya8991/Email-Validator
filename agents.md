@@ -63,9 +63,13 @@ scripts/
                           # the correct state. Safe to re-run (no-op once gap is closed).
                           # workflow_dispatch-only, dry-run by default; reconcile_email_cache.yml
   bump_cache_ttl.py       # Extends cache TTL for rows matching criteria; bump_cache_ttl.yml
-  flip_typo_domain_rows.py  # Reclassifies typo-domain emails; flip_typo_domains.yml
+  flip_typo_domain_rows.py  # Reclassifies typo-domain emails; flip_typo_domain_rows.yml
   export_cache.py         # Dumps EmailCache to CSV artifact (large-cache fallback); export_cache.yml
   audit_unknowns.py       # Reports unknown-verdict stats; audit_unknowns.yml
+  delete_job.py           # Deletes a Job + its EmailResult rows; --dry-run/--yes flags; delete_job.yml
+  fail_stale_jobs.py      # Marks jobs stuck 'running' >7h (1h past the bulk_process 6h workflow
+                          # timeout) as failed, so cancelled/killed runs don't show in-flight
+                          # forever; stale_jobs.yml
   pre_push_check.sh # 38-check safety checklist (auto-runs via .githooks/pre-push)
 .github/
   workflows/
