@@ -13,6 +13,11 @@ class ProviderResult(BaseModel):
     mx_found: bool = True
     raw: dict[str, Any] = {}
     error: str | None = None
+    # Local-provider extras — other providers leave these at defaults
+    score: int | None = None  # 0-100, see local_rules.SCORE_WEIGHTS
+    reason_codes: list[str] = []  # machine-readable, e.g. ["TYPO_DOMAIN"]
+    canonical: str | None = None  # same-mailbox form for dedup
+    suggestion: str | None = None  # full corrected email on suspected typo
 
 
 class SingleVerifyRequest(BaseModel):

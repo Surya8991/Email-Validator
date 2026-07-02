@@ -24,6 +24,26 @@ class Settings(BaseSettings):
 
     enable_smtp_probe: bool = False
     smtp_probe_from: str = "probe@example.com"
+    # HELO/EHLO domain announced during the SMTP probe. Blank → derived
+    # from smtp_probe_from's domain part. Never use a `.local`/`.invalid`
+    # TLD here — hardened MX servers (Google, Outlook) reject probes
+    # from reserved TLDs and every catch-all check returns unknown.
+    smtp_helo_domain: str = ""
+    # When smtp probe is on, also fire a random-local probe to detect
+    # catch-all domains. A confirmed catch-all downgrades any valid
+    # result to `risky` (CATCH_ALL reason code) — the MX will accept
+    # anything, so a 250 tells us nothing about the real mailbox.
+    enable_catch_all_probe: bool = True
+    # Retry the SMTP probe once on a 4xx-style transient response.
+    # Off by default because bulk mode already re-checks unknowns via
+    # retry_unknowns.yml — turn on only for single-email interactive
+    # verify where the 5-30s wait is acceptable.
+    smtp_greylist_retry: bool = False
+    smtp_greylist_sleep: float = 5.0
+    # SPF / DMARC TXT lookups — 2 cheap DNS queries per domain, cached
+    # in-process. Off by default in bulk mode to keep per-email latency
+    # tight; flip on for single-email verify or reputation scoring.
+    enable_spf_dmarc_check: bool = False
 
     bouncify_daily_cap: int = 500
     zerobounce_daily_cap: int = 0
