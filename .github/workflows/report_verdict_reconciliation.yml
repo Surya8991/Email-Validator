@@ -1,0 +1,30 @@
+name: Report Verdict Reconciliation
+
+# Read-only: prints EmailResult vs EmailCache verdict distributions side
+# by side, to confirm they stay proportionally consistent after Session
+# 26's cache-sync fix + backfill. No writes.
+#
+# Trigger: gh workflow run report_verdict_reconciliation.yml
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Report
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/report_verdict_reconciliation.py
